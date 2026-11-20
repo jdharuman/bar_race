@@ -7,7 +7,8 @@ use crate::text::{Align, Text};
 use crate::timeline::Phase;
 use anyhow::Result;
 use std::collections::BTreeMap;
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Transform};
+use std::path::Path;
+use tiny_skia::{Color, FillRule, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 
 const PALETTE: [&str; 12] = [
     "#38bdf8", "#f472b6", "#facc15", "#4ade80", "#fb923c", "#a78bfa", "#f87171", "#2dd4bf", "#e879f9", "#a3e635",
@@ -32,6 +33,7 @@ pub struct Painter {
     layout: Layout,
     text: Text,
     item_colors: Vec<Color>,
+    images: Vec<Option<Pixmap>>,
     bg: Color,
     fg: Color,
     /// Strings drawn by the last `paint` call (used by tests and the end card).
@@ -55,6 +57,21 @@ impl Painter {
             }
         }
         let item_colors = ds.items.iter().map(|it| cat_colors[it.category.as_str()]).collect();
+        let d = layout.bar_height().round().max(1.0) as u32;
+        let images = ds
+            .items
+            .iter()
+            .map(|it| {
+                let path = it.image.as_ref()?;
+                match load_circle_image(path, d) {
+                    Ok(pm) => Some(pm),
+                    Err(e) => {
+                        eprintln!("warning: image {}: {e:#}; using initials", path.display());
+                        None
+                    }
+                }
+            })
+            .collect();
         Ok(Painter {
             ds: ds.clone(),
             cfg: cfg.clone(),
@@ -62,6 +79,7 @@ impl Painter {
             layout,
             text: Text::new(),
             item_colors,
+            images,
             bg: hex(&ch.background),
             fg: hex(&ch.text),
             last_strings: Vec::new(),
@@ -82,7 +100,89 @@ impl Painter {
         self.last_strings.clear();
         pm.fill(self.bg);
         self.paint_race(pm, fs);
-        let _ = phase; // cards: Task 6
+        match *phase {
+            Phase::Intro { t } => self.paint_intro(pm, t),
+            Phase::End { t } => self.paint_end(pm, t),
+            Phase::Race { .. } | Phase::Hold => {}
+        }
+    }
+
+    fn dim(&self, pm: &mut Pixmap, a: f32) {
+        let mut paint = Paint::default();
+        paint.set_color(with_alpha(self.bg, a));
+        let r = Rect::from_xywh(0.0, 0.0, pm.width() as f32, pm.height() as f32).unwrap();
+        pm.fill_rect(r, &paint, Transform::identity(), None);
+    }
+
+    fn paint_intro(&mut self, pm: &mut Pixmap, t: f64) {
+        let t = t as f32;
+        let fade_out = ((1.0 - t) / 0.3).min(1.0); // overlay lifts over the last 30%
+        self.dim(pm, 0.75 * fade_out);
+        let a = (t / 0.3).min(1.0) * fade_out;
+        let l = self.layout.clone();
+        let (cx, cy) = (l.width as f32 / 2.0, l.height as f32 * 0.45);
+        let (title, sub) = (self.cfg.title.clone(), self.cfg.subtitle.clone());
+        self.txt(pm, &title, cx, cy, l.title_size * 2.0, true, with_alpha(self.fg, a), Align::Center);
+        if !sub.is_empty() {
+            let y = cy + l.title_size * 1.6;
+            self.txt(pm, &sub, cx, y, l.subtitle_size * 1.4, false, with_alpha(self.fg, 0.8 * a), Align::Center);
+        }
+    }
+
+    fn paint_end(&mut self, pm: &mut Pixmap, t: f64) {
+        let a = (t as f32 / 0.2).min(1.0);
+        self.dim(pm, 0.88 * a);
+        let l = self.layout.clone();
+        let fg = with_alpha(self.fg, a);
+        let cx = l.width as f32 / 2.0;
+        let line = l.label_size * 1.6;
+        let mut y = l.height as f32 * 0.3;
+        self.txt(pm, "Sources", cx, y, l.title_size, true, fg, Align::Center);
+        y += line * 1.5;
+        let mut domains: Vec<String> = Vec::new();
+        for src in self.ds.items.iter().flat_map(|i| &i.sources) {
+            let d = domain(src);
+            if !d.is_empty() && !domains.contains(&d) {
+                domains.push(d);
+            }
+        }
+        for d in domains.iter().take(5) {
+            self.txt(pm, d, cx, y, l.label_size, false, with_alpha(fg, 0.85), Align::Center);
+            y += line;
+        }
+        let share = self.ds.estimated_share();
+        if share > 0.0 {
+            y += line * 0.5;
+            let note = format!("* estimated values: {:.0}%", share * 100.0);
+            self.txt(pm, &note, cx, y, l.label_size, false, with_alpha(fg, 0.7), Align::Center);
+        }
+        let name = self.ch.name.clone();
+        self.txt(pm, &name, cx, l.height as f32 * 0.82, l.title_size * 0.8, true, fg, Align::Center);
+    }
+
+    /// Centre of the image/initials circle that sits just right of a bar's end.
+    pub fn bar_tip(&self, b: &BarState, axis_max: f64) -> (f32, f32) {
+        let l = &self.layout;
+        let bh = l.bar_height();
+        let bw = bar_width(l, b.value, axis_max);
+        (l.chart_left + bw + l.label_size * 0.4 + bh / 2.0, l.slot_center_y(b.slot))
+    }
+
+    fn paint_axis(&mut self, pm: &mut Pixmap, axis_max: f64) {
+        let l = self.layout.clone();
+        let chart_w = l.chart_right - l.chart_left;
+        let mut paint = Paint::default();
+        paint.set_color(with_alpha(self.fg, 0.10));
+        let tick_size = l.label_size * 0.75;
+        for v in nice_ticks(axis_max) {
+            let x = l.chart_left + (v / axis_max) as f32 * chart_w;
+            if let Some(r) = Rect::from_xywh(x, l.chart_top - tick_size * 0.4, (l.height as f32 / 1080.0).max(1.0), l.chart_bottom - l.chart_top) {
+                pm.fill_rect(r, &paint, Transform::identity(), None);
+            }
+            let label = format_value(v, &self.cfg.unit_prefix, &self.cfg.unit_suffix);
+            let y = l.chart_top - tick_size * 1.1;
+            self.txt(pm, &label, x, y, tick_size, false, with_alpha(self.fg, 0.45), Align::Center);
+        }
     }
 
     fn paint_race(&mut self, pm: &mut Pixmap, fs: &FrameState) {
@@ -99,6 +199,7 @@ impl Painter {
         let year = format!("{}", fs.year.floor() as i64);
         let align = if l.year_centered { Align::Center } else { Align::Right };
         self.txt(pm, &year, l.year_pos.0, l.year_pos.1, l.year_size, true, with_alpha(self.fg, 0.25), align);
+        self.paint_axis(pm, fs.axis_max);
         // bars, bottom-most first so overtaking bars draw on top
         for b in fs.bars.iter().rev() {
             self.paint_bar(pm, b, fs.axis_max);
@@ -110,25 +211,46 @@ impl Painter {
     }
 
     fn paint_bar(&mut self, pm: &mut Pixmap, b: &BarState, axis_max: f64) {
-        let l = &self.layout;
+        let l = self.layout.clone();
         let cy = l.slot_center_y(b.slot);
         let bh = l.bar_height();
-        let chart_w = l.chart_right - l.chart_left;
-        let bw = ((b.value.max(0.0) / axis_max.max(1e-9)) as f32 * chart_w).clamp(0.0, chart_w);
+        let bw = bar_width(&l, b.value, axis_max);
         let (x0, label_size) = (l.chart_left, l.label_size);
+        let color = with_alpha(self.item_colors[b.idx], b.alpha);
         if bw >= 1.0 {
             let r = (bh / 2.0).min(bw);
             let path = rounded_bar(x0, cy - bh / 2.0, bw, bh, r);
             let mut paint = Paint::default();
-            paint.set_color(with_alpha(self.item_colors[b.idx], b.alpha));
+            paint.set_color(color);
             paint.anti_alias = true;
             pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+        // image or initials circle just past the bar end
+        let (icx, _) = self.bar_tip(b, axis_max);
+        let circle = PathBuilder::from_circle(icx, cy, bh / 2.0).unwrap();
+        match &self.images[b.idx] {
+            Some(img) => {
+                let mut mask = Mask::new(pm.width(), pm.height()).unwrap();
+                mask.fill_path(&circle, FillRule::Winding, true, Transform::identity());
+                let paint = PixmapPaint { opacity: b.alpha, ..Default::default() };
+                let (ix, iy) = ((icx - bh / 2.0).round() as i32, (cy - bh / 2.0).round() as i32);
+                pm.draw_pixmap(ix, iy, img.as_ref(), &paint, Transform::identity(), Some(&mask));
+            }
+            None => {
+                let mut paint = Paint::default();
+                let c = self.item_colors[b.idx];
+                paint.set_color(Color::from_rgba(c.red() * 0.55, c.green() * 0.55, c.blue() * 0.55, b.alpha).unwrap());
+                paint.anti_alias = true;
+                pm.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
+                let ini = initials(&self.ds.items[b.idx].name);
+                self.txt(pm, &ini, icx, cy, bh * 0.42, true, with_alpha(self.fg, b.alpha), Align::Center);
+            }
         }
         let pad = label_size * 0.5;
         let name = self.ds.items[b.idx].name.clone();
         let name_w = self.text.measure(&name, label_size, true);
         let fg = with_alpha(self.fg, b.alpha);
-        let mut after = x0 + bw + pad;
+        let mut after = icx + bh / 2.0 + pad;
         if name_w + 2.0 * pad <= bw {
             self.txt(pm, &name, x0 + pad, cy, label_size, true, fg, Align::Left);
         } else {
@@ -141,6 +263,47 @@ impl Painter {
         }
         self.txt(pm, &value, after, cy, label_size, false, with_alpha(fg, 0.85), Align::Left);
     }
+}
+
+fn bar_width(l: &Layout, value: f64, axis_max: f64) -> f32 {
+    let chart_w = l.chart_right - l.chart_left;
+    ((value.max(0.0) / axis_max.max(1e-9)) as f32 * chart_w).clamp(0.0, chart_w)
+}
+
+/// Up to two initials from the first letters of the name's words.
+fn initials(name: &str) -> String {
+    name.split_whitespace().filter_map(|w| w.chars().next()).take(2).flat_map(char::to_uppercase).collect()
+}
+
+/// "https://www.worldbank.org/x" → "worldbank.org"
+fn domain(url: &str) -> String {
+    let s = url.split("://").nth(1).unwrap_or(url);
+    let host = s.split('/').next().unwrap_or("");
+    host.trim_start_matches("www.").to_string()
+}
+
+/// Gridline values 0, step, 2·step… ≤ max, with step a 1/2/5×10^k giving about five ticks.
+pub fn nice_ticks(max: f64) -> Vec<f64> {
+    if !(max > 0.0) {
+        return vec![0.0];
+    }
+    let raw = max / 5.0;
+    let mag = 10f64.powf(raw.log10().floor());
+    let norm = raw / mag;
+    let step = mag * if norm <= 1.0 { 1.0 } else if norm <= 2.0 { 2.0 } else if norm <= 5.0 { 5.0 } else { 10.0 };
+    (0..).map(|i| i as f64 * step).take_while(|v| *v <= max).collect()
+}
+
+/// Load an image, crop to a centred square and scale to d×d, as a premultiplied pixmap.
+fn load_circle_image(path: &Path, d: u32) -> Result<Pixmap> {
+    let img = image::open(path)?.resize_to_fill(d, d, image::imageops::FilterType::Lanczos3).to_rgba8();
+    let mut pm = Pixmap::new(d, d).unwrap();
+    for (dst, src) in pm.pixels_mut().iter_mut().zip(img.pixels()) {
+        let [r, g, b, a] = src.0;
+        let pre = |c: u8| ((c as u16 * a as u16 + 127) / 255) as u8;
+        *dst = tiny_skia::PremultipliedColorU8::from_rgba(pre(r), pre(g), pre(b), a).unwrap();
+    }
+    Ok(pm)
 }
 
 /// Bar from (x, y) of width w and height h whose right end is rounded with radius r.
@@ -235,5 +398,74 @@ mod tests {
         // category N is palette[1]; no bar pixels of that colour in the Neg row
         assert_eq!(count_color_in_row(&pm, y, [0xf4, 0x72, 0xb6]), 0);
         assert!(p.last_strings.iter().any(|s| s == "-5.0"));
+    }
+
+    fn one_item(image: Option<std::path::PathBuf>) -> Dataset {
+        Dataset::from_items(vec![Item {
+            name: "Red Land".into(),
+            category: "X".into(),
+            image,
+            points: vec![Point { year: 2000, value: 10.0, estimated: false }, Point { year: 2001, value: 10.0, estimated: false }],
+            sources: vec!["https://www.worldbank.org/x".into()],
+        }])
+    }
+
+    #[test]
+    fn image_drawn_at_bar_tip() {
+        let dir = crate::testutil::temp_week("name\n");
+        let png = dir.join("red.png");
+        image::RgbaImage::from_pixel(64, 64, image::Rgba([255, 0, 0, 255])).save(&png).unwrap();
+        let ds = one_item(Some(png));
+        let fs = settle(&ds, 10, 2000.5);
+        let mut p = painter(&ds);
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint(&mut pm, &Phase::Race { year: 2000.5 }, &fs);
+        let (cx, cy) = p.bar_tip(&fs.bars[0], fs.axis_max);
+        let px = pm.pixel(cx as u32, cy as u32).unwrap();
+        assert!(px.red() > 230 && px.green() < 30 && px.blue() < 30, "{px:?}");
+    }
+
+    #[test]
+    fn initials_fallback() {
+        let ds = one_item(None);
+        let fs = settle(&ds, 10, 2000.5);
+        let mut p = painter(&ds);
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint(&mut pm, &Phase::Race { year: 2000.5 }, &fs);
+        assert!(p.last_strings.iter().any(|s| s == "RL"), "{:?}", p.last_strings);
+    }
+
+    #[test]
+    fn axis_ticks_are_nice() {
+        assert_eq!(nice_ticks(35.0), vec![0.0, 10.0, 20.0, 30.0]);
+        assert_eq!(nice_ticks(2.4e12), vec![0.0, 5e11, 1e12, 1.5e12, 2e12]);
+        assert_eq!(nice_ticks(0.9), vec![0.0, 0.2, 0.4, 0.6000000000000001, 0.8]);
+    }
+
+    #[test]
+    fn intro_card_shows_title() {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let fs = settle(&ds, 10, 2000.0);
+        let cfg = VideoConfig { title: "Big Title".into(), ..Default::default() };
+        let mut p = Painter::new(&ds, &cfg, &ChannelConfig::default(), Layout::landscape(0.5, 10)).unwrap();
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint(&mut pm, &Phase::Intro { t: 0.5 }, &fs);
+        let (w, h) = (pm.width(), pm.height());
+        let bright = (h / 3..2 * h / 3)
+            .flat_map(|y| (w / 4..3 * w / 4).map(move |x| (x, y)))
+            .filter(|&(x, y)| pm.pixel(x, y).unwrap().red() > 200 && pm.pixel(x, y).unwrap().blue() > 200)
+            .count();
+        assert!(bright >= 500, "{bright}");
+    }
+
+    #[test]
+    fn end_card_estimated_note() {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let fs = settle(&ds, 10, 2003.0);
+        let mut p = painter(&ds);
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint(&mut pm, &Phase::End { t: 0.5 }, &fs);
+        assert!(p.last_strings.iter().any(|s| s == "* estimated values: 8%"), "{:?}", p.last_strings);
+        assert!(p.last_strings.iter().any(|s| s == "example.org"), "{:?}", p.last_strings);
     }
 }
