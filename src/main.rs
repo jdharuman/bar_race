@@ -1,6 +1,7 @@
 mod config;
 mod data;
 mod scene;
+mod timeline;
 #[cfg(test)]
 mod testutil;
 mod validate;
