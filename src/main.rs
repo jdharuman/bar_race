@@ -1,6 +1,10 @@
 mod config;
 mod data;
+mod draw;
+mod fmt;
+mod layout;
 mod scene;
+mod text;
 mod timeline;
 #[cfg(test)]
 mod testutil;
