@@ -1,0 +1,5 @@
+name = "Stat Race"
+# logo = "assets/logo.png"
+background = "#0f172a"
+text = "#ffffff"
+accent = "#38bdf8"

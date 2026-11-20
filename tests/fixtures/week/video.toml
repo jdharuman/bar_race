@@ -1,0 +1,6 @@
+title = "Test Race"
+subtitle = "Fixture data"
+unit_prefix = "$"
+unit_suffix = "B"
+seconds_per_year = 0.5
+reviewed = true
