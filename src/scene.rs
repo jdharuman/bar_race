@@ -10,7 +10,7 @@ pub fn value_at(item: &Item, year: f64) -> Option<(f64, bool)> {
     let pts = &item.points;
     let (first, last) = (pts.first()?, pts.last()?);
     let (fy, ly) = (first.year as f64, last.year as f64);
-    if year < fy - 1.0 || year > ly + 1.0 {
+    if year <= fy - 1.0 || year >= ly + 1.0 {
         return None;
     }
     if year < fy {
@@ -133,6 +133,13 @@ mod tests {
         assert_eq!(value_at(&d, 2002.5).map(|v| v.0), Some(4.0));
         assert_eq!(value_at(&d, 2000.9), None);
         assert_eq!(value_at(&d, 2003.1), None);
+    }
+
+    #[test]
+    fn ramp_endpoints_are_absent() {
+        let d = item("D", &[(2002, 8.0, false)]);
+        assert_eq!(value_at(&d, 2001.0), None);
+        assert_eq!(value_at(&d, 2003.0), None);
     }
 
     #[test]

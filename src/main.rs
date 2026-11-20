@@ -1,8 +1,10 @@
 mod config;
 mod data;
 mod draw;
+mod encode;
 mod fmt;
 mod layout;
+mod render;
 mod scene;
 mod text;
 mod timeline;
@@ -25,6 +27,22 @@ struct Cli {
 enum Cmd {
     /// Check a week folder's data.csv and video.toml
     Validate { dir: PathBuf },
+    /// Render the video(s) for a week folder into <dir>/out/
+    Render {
+        dir: PathBuf,
+        #[arg(long, value_enum, default_value = "main")]
+        format: FormatArg,
+        /// Half resolution, 30 fps, for quick checks
+        #[arg(long)]
+        preview: bool,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum FormatArg {
+    Main,
+    Short,
+    Both,
 }
 
 fn main() -> ExitCode {
@@ -52,6 +70,18 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                 println!("error: {e}");
             }
             Ok(if r.errors.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+        }
+        Cmd::Render { dir, format, preview } => {
+            use timeline::Format;
+            let formats: &[Format] = match format {
+                FormatArg::Main => &[Format::Main],
+                FormatArg::Short => &[Format::Short],
+                FormatArg::Both => &[Format::Main, Format::Short],
+            };
+            for &f in formats {
+                render::render(&dir, f, preview)?;
+            }
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
