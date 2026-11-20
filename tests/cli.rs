@@ -70,3 +70,30 @@ fn missing_ffmpeg_clear_error() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("ffmpeg not found"), "{}", String::from_utf8_lossy(&out.stderr));
 }
+
+#[test]
+fn render_with_music_has_audio() {
+    let dir = temp_fixture(None);
+    std::fs::create_dir_all(dir.join("music")).unwrap();
+    let st = Command::new("ffmpeg")
+        .args(["-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=5"])
+        .arg(dir.join("music/t.mp3"))
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let out = run_in(&dir, &["render", ".", "--preview"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let (_, _, _, dur, audio) = probe(&dir.join("out/main.mp4"));
+    assert!(audio, "no audio stream");
+    assert!((dur - 11.5).abs() < 0.15, "duration {dur}");
+}
+
+#[test]
+fn no_music_is_silent_ok() {
+    let dir = temp_fixture(None);
+    let out = run_in(&dir, &["render", ".", "--preview"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no music"));
+    let (_, _, _, _, audio) = probe(&dir.join("out/main.mp4"));
+    assert!(!audio);
+}
