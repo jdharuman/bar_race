@@ -36,6 +36,13 @@ enum Cmd {
         #[arg(long)]
         preview: bool,
     },
+    /// Render out/thumb.png (1280x720)
+    Thumb {
+        dir: PathBuf,
+        /// Year to show (default: last year in the data)
+        #[arg(long)]
+        year: Option<f64>,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -81,6 +88,10 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             for &f in formats {
                 render::render(&dir, f, preview)?;
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Thumb { dir, year } => {
+            render::thumb(&dir, year)?;
             Ok(ExitCode::SUCCESS)
         }
     }

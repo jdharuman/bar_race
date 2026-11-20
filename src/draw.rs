@@ -90,6 +90,17 @@ impl Painter {
         &self.layout
     }
 
+    /// Thumbnail: race frame without the small title block, oversized title in the header area.
+    pub fn paint_thumb(&mut self, pm: &mut Pixmap, fs: &FrameState) {
+        self.last_strings.clear();
+        pm.fill(self.bg);
+        self.paint_race_inner(pm, fs, false);
+        let l = self.layout.clone();
+        let title = self.cfg.title.clone();
+        let size = self.fit_size(&title, l.title_size * 2.2, true, l.width as f32 * 0.92);
+        self.txt(pm, &title, l.width as f32 / 2.0, l.chart_top * 0.45, size, true, self.fg, Align::Center);
+    }
+
     /// Largest size ≤ `size` at which `s` fits in `max_w`.
     fn fit_size(&mut self, s: &str, size: f32, bold: bool, max_w: f32) -> f32 {
         let w = self.text.measure(s, size, bold);
@@ -195,14 +206,20 @@ impl Painter {
     }
 
     fn paint_race(&mut self, pm: &mut Pixmap, fs: &FrameState) {
+        self.paint_race_inner(pm, fs, true);
+    }
+
+    fn paint_race_inner(&mut self, pm: &mut Pixmap, fs: &FrameState, with_title: bool) {
         let l = self.layout.clone();
         // title block
         let title = self.cfg.title.clone();
         let subtitle = self.cfg.subtitle.clone();
         let max_w = l.width as f32 - 2.0 * l.title_pos.0;
         let ts = self.fit_size(&title, l.title_size, true, max_w);
-        self.txt(pm, &title, l.title_pos.0, l.title_pos.1, ts, true, self.fg, Align::Left);
-        if !subtitle.is_empty() {
+        if with_title {
+            self.txt(pm, &title, l.title_pos.0, l.title_pos.1, ts, true, self.fg, Align::Left);
+        }
+        if with_title && !subtitle.is_empty() {
             let ss = self.fit_size(&subtitle, l.subtitle_size, false, max_w);
             let y = l.title_pos.1 + l.title_size * 0.9 + l.subtitle_size * 0.6;
             self.txt(pm, &subtitle, l.title_pos.0, y, ss, false, with_alpha(self.fg, 0.7), Align::Left);
@@ -496,5 +513,16 @@ mod tests {
             .filter(|&(x, y)| pm.pixel(x, y).unwrap().red() > 150)
             .count();
         assert_eq!(lit, 0, "title spills past right margin");
+    }
+
+    #[test]
+    fn thumb_draws_title_once() {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let fs = settle(&ds, 10, 2003.0);
+        let cfg = VideoConfig { title: "Big Title".into(), ..Default::default() };
+        let mut p = Painter::new(&ds, &cfg, &ChannelConfig::default(), Layout::landscape(0.5, 10)).unwrap();
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint_thumb(&mut pm, &fs);
+        assert_eq!(p.last_strings.iter().filter(|s| *s == "Big Title").count(), 1, "{:?}", p.last_strings);
     }
 }

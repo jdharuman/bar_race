@@ -34,6 +34,32 @@ pub fn pick_music(cfg: &VideoConfig, week_dir: &Path, music_dir: &Path) -> Optio
     Some(tracks.swap_remove((h % tracks.len() as u64) as usize))
 }
 
+/// Render `out/thumb.png` (1280×720) at `year` (default: last year) with a big title overlay.
+pub fn thumb(week_dir: &Path, year: Option<f64>) -> Result<PathBuf> {
+    let cfg = VideoConfig::load(&week_dir.join("video.toml"))?;
+    let ds = Dataset::load(week_dir)?;
+    let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
+    let layout = Layout::landscape(1.0, cfg.top_n);
+    let year = year.unwrap_or(ds.last_year as f64);
+    let mut tracker = RankTracker::new(ds.items.len(), layout.top_n);
+    let mut fs = tracker.step(&ds, year, 1.0 / 60.0);
+    for _ in 0..120 {
+        fs = tracker.step(&ds, year, 1.0 / 60.0);
+    }
+    let mut painter = Painter::new(&ds, &cfg, &ch, layout.clone())?;
+    let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
+    painter.paint_thumb(&mut pm, &fs);
+    // background is opaque, so premultiplied RGBA == straight RGBA
+    let img = image::RgbaImage::from_raw(layout.width, layout.height, pm.data().to_vec()).unwrap();
+    let small = image::imageops::resize(&img, 1280, 720, image::imageops::FilterType::Lanczos3);
+    let out_dir = week_dir.join("out");
+    std::fs::create_dir_all(&out_dir)?;
+    let out = out_dir.join("thumb.png");
+    small.save(&out)?;
+    eprintln!("wrote {}", out.display());
+    Ok(out)
+}
+
 pub fn render(week_dir: &Path, fmt: Format, preview: bool) -> Result<PathBuf> {
     let cfg = VideoConfig::load(&week_dir.join("video.toml"))?;
     if !cfg.reviewed {

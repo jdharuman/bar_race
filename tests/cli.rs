@@ -116,3 +116,11 @@ fn render_both() {
     assert!(dir.join("out/main.mp4").exists());
     assert!(dir.join("out/short.mp4").exists());
 }
+
+#[test]
+fn thumb_png_1280x720() {
+    let dir = temp_fixture(None);
+    let out = run_in(&dir, &["thumb", "."]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(image::image_dimensions(dir.join("out/thumb.png")).unwrap(), (1280, 720));
+}
