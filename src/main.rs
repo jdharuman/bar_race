@@ -1,5 +1,6 @@
 mod config;
 mod data;
+mod scene;
 #[cfg(test)]
 mod testutil;
 mod validate;
