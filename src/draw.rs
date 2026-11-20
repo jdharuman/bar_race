@@ -90,6 +90,12 @@ impl Painter {
         &self.layout
     }
 
+    /// Largest size ≤ `size` at which `s` fits in `max_w`.
+    fn fit_size(&mut self, s: &str, size: f32, bold: bool, max_w: f32) -> f32 {
+        let w = self.text.measure(s, size, bold);
+        if w <= max_w { size } else { (size * max_w / w).floor() }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn txt(&mut self, pm: &mut Pixmap, s: &str, x: f32, y: f32, size: f32, bold: bool, color: Color, align: Align) {
         self.text.draw(pm, s, x, y, size, bold, color, align);
@@ -122,10 +128,13 @@ impl Painter {
         let l = self.layout.clone();
         let (cx, cy) = (l.width as f32 / 2.0, l.height as f32 * 0.45);
         let (title, sub) = (self.cfg.title.clone(), self.cfg.subtitle.clone());
-        self.txt(pm, &title, cx, cy, l.title_size * 2.0, true, with_alpha(self.fg, a), Align::Center);
+        let max_w = l.width as f32 * 0.9;
+        let ts = self.fit_size(&title, l.title_size * 2.0, true, max_w);
+        self.txt(pm, &title, cx, cy, ts, true, with_alpha(self.fg, a), Align::Center);
         if !sub.is_empty() {
             let y = cy + l.title_size * 1.6;
-            self.txt(pm, &sub, cx, y, l.subtitle_size * 1.4, false, with_alpha(self.fg, 0.8 * a), Align::Center);
+            let ss = self.fit_size(&sub, l.subtitle_size * 1.4, false, max_w);
+            self.txt(pm, &sub, cx, y, ss, false, with_alpha(self.fg, 0.8 * a), Align::Center);
         }
     }
 
@@ -190,10 +199,13 @@ impl Painter {
         // title block
         let title = self.cfg.title.clone();
         let subtitle = self.cfg.subtitle.clone();
-        self.txt(pm, &title, l.title_pos.0, l.title_pos.1, l.title_size, true, self.fg, Align::Left);
+        let max_w = l.width as f32 - 2.0 * l.title_pos.0;
+        let ts = self.fit_size(&title, l.title_size, true, max_w);
+        self.txt(pm, &title, l.title_pos.0, l.title_pos.1, ts, true, self.fg, Align::Left);
         if !subtitle.is_empty() {
+            let ss = self.fit_size(&subtitle, l.subtitle_size, false, max_w);
             let y = l.title_pos.1 + l.title_size * 0.9 + l.subtitle_size * 0.6;
-            self.txt(pm, &subtitle, l.title_pos.0, y, l.subtitle_size, false, with_alpha(self.fg, 0.7), Align::Left);
+            self.txt(pm, &subtitle, l.title_pos.0, y, ss, false, with_alpha(self.fg, 0.7), Align::Left);
         }
         // year counter
         let year = format!("{}", fs.year.floor() as i64);
@@ -467,5 +479,22 @@ mod tests {
         p.paint(&mut pm, &Phase::End { t: 0.5 }, &fs);
         assert!(p.last_strings.iter().any(|s| s == "* estimated values: 8%"), "{:?}", p.last_strings);
         assert!(p.last_strings.iter().any(|s| s == "example.org"), "{:?}", p.last_strings);
+    }
+
+    #[test]
+    fn long_title_fits_portrait_width() {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let fs = settle(&ds, 8, 2001.0);
+        let cfg = VideoConfig { title: "The Largest Economies in the Entire World by Nominal GDP".into(), ..Default::default() };
+        let mut p = Painter::new(&ds, &cfg, &ChannelConfig::default(), Layout::portrait(0.5, 8)).unwrap();
+        let (w, h) = (p.layout().width, p.layout().height);
+        let mut pm = Pixmap::new(w, h).unwrap();
+        p.paint(&mut pm, &Phase::Race { year: 2001.0 }, &fs);
+        let edge = w - w * 4 / 100;
+        let lit = (0..h * 15 / 100)
+            .flat_map(|y| (edge..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| pm.pixel(x, y).unwrap().red() > 150)
+            .count();
+        assert_eq!(lit, 0, "title spills past right margin");
     }
 }

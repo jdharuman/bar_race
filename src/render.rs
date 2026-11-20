@@ -44,7 +44,7 @@ pub fn render(week_dir: &Path, fmt: Format, preview: bool) -> Result<PathBuf> {
     let (scale, fps) = if preview { (0.5, 30) } else { (1.0, 60) };
     let (layout, name) = match fmt {
         Format::Main => (Layout::landscape(scale, cfg.top_n), "main.mp4"),
-        Format::Short => bail!("short format not implemented yet"),
+        Format::Short => (Layout::portrait(scale, cfg.top_n_short), "short.mp4"),
     };
     let tl = Timeline::new(fmt, &cfg, &ds, fps);
     let out_dir = week_dir.join("out");

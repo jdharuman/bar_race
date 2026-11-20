@@ -97,3 +97,22 @@ fn no_music_is_silent_ok() {
     let (_, _, _, _, audio) = probe(&dir.join("out/main.mp4"));
     assert!(!audio);
 }
+
+#[test]
+fn render_short_preview() {
+    let dir = temp_fixture(Some("title = \"T\"\nreviewed = true\nshort_seconds = 12\n"));
+    let out = run_in(&dir, &["render", ".", "--format", "short", "--preview"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let (w, h, _, dur, _) = probe(&dir.join("out/short.mp4"));
+    assert_eq!((w, h), (540, 960));
+    assert!((dur - 12.0).abs() < 0.1, "duration {dur}");
+}
+
+#[test]
+fn render_both() {
+    let dir = temp_fixture(Some("title = \"T\"\nreviewed = true\nseconds_per_year = 0.5\nshort_seconds = 8\n"));
+    let out = run_in(&dir, &["render", ".", "--format", "both", "--preview"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(dir.join("out/main.mp4").exists());
+    assert!(dir.join("out/short.mp4").exists());
+}
