@@ -60,7 +60,7 @@ impl Timeline {
         }
         let s = s - self.intro;
         if s < self.race {
-            let span = (self.end_year - self.start_year).max(1) as f64;
+            let span = (self.end_year - self.start_year) as f64; // 0 for single-year data: hold still
             return Phase::Race { year: self.start_year as f64 + s / self.race * span };
         }
         let s = s - self.race;
@@ -124,5 +124,18 @@ mod tests {
         assert!(matches!(t.phase_at(last_race), Phase::Race { year } if year <= 2003.0 && year > 2002.9));
         assert!(matches!(t.phase_at(last_race + 1), Phase::Hold));
         assert!(matches!(t.phase_at(t.frame_count() - 1), Phase::End { t } if t > 0.98));
+    }
+
+    #[test]
+    fn single_year_never_races_past_end() {
+        let d = ds(2000, 2000);
+        for fmt in [Format::Main, Format::Short] {
+            let t = Timeline::new(fmt, &VideoConfig::default(), &d, 30);
+            for f in 0..t.frame_count() {
+                if let Phase::Race { year } = t.phase_at(f) {
+                    assert_eq!(year, 2000.0);
+                }
+            }
+        }
     }
 }

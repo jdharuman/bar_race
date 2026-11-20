@@ -17,6 +17,7 @@ pub struct Report {
 pub fn run(week_dir: &Path) -> Result<Report> {
     let (items, mut errors) = parse(week_dir)?;
     let mut warnings = Vec::new();
+    // ponytail: load() also range-checks, so bad ranges surface here as one video.toml error
     let reviewed = match VideoConfig::load(&week_dir.join("video.toml")) {
         Ok(c) => c.reviewed,
         Err(e) => {

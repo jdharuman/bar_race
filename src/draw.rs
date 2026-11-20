@@ -86,6 +86,7 @@ impl Painter {
         })
     }
 
+    #[cfg(test)]
     pub fn layout(&self) -> &Layout {
         &self.layout
     }
@@ -259,11 +260,9 @@ impl Painter {
         let circle = PathBuilder::from_circle(icx, cy, bh / 2.0).unwrap();
         match &self.images[b.idx] {
             Some(img) => {
-                let mut mask = Mask::new(pm.width(), pm.height()).unwrap();
-                mask.fill_path(&circle, FillRule::Winding, true, Transform::identity());
                 let paint = PixmapPaint { opacity: b.alpha, ..Default::default() };
                 let (ix, iy) = ((icx - bh / 2.0).round() as i32, (cy - bh / 2.0).round() as i32);
-                pm.draw_pixmap(ix, iy, img.as_ref(), &paint, Transform::identity(), Some(&mask));
+                pm.draw_pixmap(ix, iy, img.as_ref(), &paint, Transform::identity(), None);
             }
             None => {
                 let mut paint = Paint::default();
@@ -323,16 +322,21 @@ pub fn nice_ticks(max: f64) -> Vec<f64> {
     (0..).map(|i| i as f64 * step).take_while(|v| *v <= max).collect()
 }
 
-/// Load an image, crop to a centred square and scale to d×d, as a premultiplied pixmap.
+/// Load an image, crop to a centred square, scale to d×d and cut to a circle (premultiplied).
 fn load_circle_image(path: &Path, d: u32) -> Result<Pixmap> {
     let img = image::open(path)?.resize_to_fill(d, d, image::imageops::FilterType::Lanczos3).to_rgba8();
-    let mut pm = Pixmap::new(d, d).unwrap();
-    for (dst, src) in pm.pixels_mut().iter_mut().zip(img.pixels()) {
+    let mut square = Pixmap::new(d, d).unwrap();
+    for (dst, src) in square.pixels_mut().iter_mut().zip(img.pixels()) {
         let [r, g, b, a] = src.0;
         let pre = |c: u8| ((c as u16 * a as u16 + 127) / 255) as u8;
         *dst = tiny_skia::PremultipliedColorU8::from_rgba(pre(r), pre(g), pre(b), a).unwrap();
     }
-    Ok(pm)
+    let r = d as f32 / 2.0;
+    let mut mask = Mask::new(d, d).unwrap();
+    mask.fill_path(&PathBuilder::from_circle(r, r, r).unwrap(), FillRule::Winding, true, Transform::identity());
+    let mut out = Pixmap::new(d, d).unwrap();
+    out.draw_pixmap(0, 0, square.as_ref(), &PixmapPaint::default(), Transform::identity(), Some(&mask));
+    Ok(out)
 }
 
 /// Bar from (x, y) of width w and height h whose right end is rounded with radius r.
@@ -524,5 +528,15 @@ mod tests {
         let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
         p.paint_thumb(&mut pm, &fs);
         assert_eq!(p.last_strings.iter().filter(|s| *s == "Big Title").count(), 1, "{:?}", p.last_strings);
+    }
+
+    #[test]
+    fn circle_image_has_transparent_corners() {
+        let dir = crate::testutil::temp_week("name\n");
+        let png = dir.join("red.png");
+        image::RgbaImage::from_pixel(64, 64, image::Rgba([255, 0, 0, 255])).save(&png).unwrap();
+        let pm = load_circle_image(&png, 40).unwrap();
+        assert_eq!(pm.pixel(0, 0).unwrap().alpha(), 0);
+        assert_eq!(pm.pixel(20, 20).unwrap().alpha(), 255);
     }
 }

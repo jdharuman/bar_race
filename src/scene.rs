@@ -7,6 +7,9 @@ const ALPHA_TAU: f64 = 0.15;
 /// Interpolated value of `item` at fractional `year`, plus whether it leans on an estimate.
 /// Ramps from 0 over the year before the first point and back to 0 over the year after the last.
 pub fn value_at(item: &Item, year: f64) -> Option<(f64, bool)> {
+    if !year.is_finite() {
+        return None;
+    }
     let pts = &item.points;
     let (first, last) = (pts.first()?, pts.last()?);
     let (fy, ly) = (first.year as f64, last.year as f64);
@@ -222,5 +225,12 @@ mod tests {
             fs = t.step(&ds, 2002.0, 1.0 / 60.0);
         }
         assert!(fs.bars.iter().all(|b| b.idx != 1), "Gone should have left the frame");
+    }
+
+    #[test]
+    fn non_finite_year_is_absent() {
+        let a = item("A", &[(2000, 1.0, false), (2001, 2.0, false)]);
+        assert_eq!(value_at(&a, f64::NAN), None);
+        assert_eq!(value_at(&a, f64::INFINITY), None);
     }
 }
