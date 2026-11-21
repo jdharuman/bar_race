@@ -65,16 +65,35 @@ pub fn ease_walk(u: f64) -> f64 {
     }
 }
 
+/// Pillars (behind, ahead) of the focus position that are on screen, in pillar steps.
+pub fn visible_window(width: u32, height: u32, portrait: bool) -> (f64, f64) {
+    let cam = Camera::for_frame(width, height, portrait);
+    let spacing_px = cam.focal * SPACING / cam.dist;
+    let focus_px = cam.cx - cam.focal * (focus_x(0.0, portrait)) / cam.dist;
+    let half = 0.5 * PILLAR_W / SPACING;
+    (
+        (focus_px / spacing_px + half) as f64,
+        ((width as f32 - focus_px) / spacing_px + half) as f64,
+    )
+}
+
 /// Vertical scale (world height per value unit) that keeps nearby pillars framed.
 pub struct HeightFollow {
     log_scale: Option<f64>,
+    behind: f64,
+    ahead: f64,
 }
 
 impl HeightFollow {
     const TAU: f64 = 0.5;
 
     pub fn new() -> HeightFollow {
-        HeightFollow { log_scale: None }
+        Self::with_window(1.5, 2.5)
+    }
+
+    /// Follow the max of pillars from p − behind to p + ahead (use `visible_window`).
+    pub fn with_window(behind: f64, ahead: f64) -> HeightFollow {
+        HeightFollow { log_scale: None, behind, ahead }
     }
 
     /// Smoothed so the max value among pillars p−1.5 … p+2.5 reaches TARGET_H.
@@ -82,7 +101,7 @@ impl HeightFollow {
         let local_max = values
             .iter()
             .enumerate()
-            .filter(|(i, _)| (*i as f64) >= p - 1.5 && (*i as f64) <= p + 2.5)
+            .filter(|(i, _)| (*i as f64) >= p - self.behind && (*i as f64) <= p + self.ahead)
             .map(|(_, v)| *v)
             .fold(0.0, f64::max);
         if local_max <= 0.0 {
@@ -171,5 +190,16 @@ mod tests {
         };
         assert!(count(1920, 1080, false) >= 4);
         assert!(count(1080, 1920, true) <= 3);
+    }
+
+    #[test]
+    fn follow_window_matches_visible_range() {
+        let (_, ahead) = visible_window(1920, 1080, false);
+        assert!(ahead >= 3.0, "landscape must see the pillar entering at the right edge: {ahead}");
+        let (_, ahead_p) = visible_window(1080, 1920, true);
+        assert!(ahead_p <= 2.2, "portrait must not react to off-screen pillars: {ahead_p}");
+        let mut f = HeightFollow::with_window(1.5, ahead);
+        let v = [1.0, 1.0, 1.0, 100.0];
+        assert!((f.step(&v, 0.0, 1.0 / 60.0) * 100.0 - TARGET_H).abs() < 1e-3, "pillar 3 ahead is in the window");
     }
 }

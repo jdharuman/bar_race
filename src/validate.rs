@@ -22,8 +22,12 @@ pub fn run(week_dir: &Path) -> Result<Report> {
         Ok(c) => (Some(c), None),
         Err(e) => (None, Some(format!("video.toml: {e:#}"))),
     };
-    if cfg.as_ref().is_some_and(|c| c.style == Style::Pillars) {
-        return run_pillars(week_dir, cfg.unwrap());
+    // a broken video.toml can't say its style: guess from which data file exists
+    let pillars_files = week_dir.join("pillars.csv").exists() && !week_dir.join("data.csv").exists();
+    match &cfg {
+        Some(c) if c.style == Style::Pillars => return run_pillars(week_dir, c.clone(), vec![]),
+        None if pillars_files => return run_pillars(week_dir, VideoConfig::default(), cfg_err.into_iter().collect()),
+        _ => {}
     }
     let reviewed = cfg.as_ref().is_some_and(|c| c.reviewed);
     let (items, mut errors, g) = parse(week_dir)?;
@@ -59,9 +63,9 @@ pub fn run(week_dir: &Path) -> Result<Report> {
     })
 }
 
-fn run_pillars(week_dir: &Path, cfg: VideoConfig) -> Result<Report> {
-    let (rows, errors) = crate::pillars::parse(week_dir)?;
-    let mut warnings = Vec::new();
+fn run_pillars(week_dir: &Path, cfg: VideoConfig, mut errors: Vec<String>) -> Result<Report> {
+    let (rows, row_errors, mut warnings) = crate::pillars::parse_with_warnings(week_dir)?;
+    errors.extend(row_errors);
     if !cfg.reviewed {
         warnings.push("reviewed = false: check pillars.csv, then set reviewed = true in video.toml".into());
     }
@@ -130,5 +134,15 @@ mod tests {
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert_eq!(r.items, 2);
         assert!(r.warnings.iter().any(|w| w.contains("top_n")), "{:?}", r.warnings);
+    }
+
+    #[test]
+    fn pillars_config_error_not_masked() {
+        let dir = crate::testutil::temp_week("name\n");
+        std::fs::remove_file(dir.join("data.csv")).unwrap();
+        std::fs::write(dir.join("pillars.csv"), "label,name,value\n1,A,5\n").unwrap();
+        std::fs::write(dir.join("video.toml"), "style = \"pillars\"\nseconds_per_pillar = 0\n").unwrap();
+        let r = run(&dir).unwrap();
+        assert!(r.errors.iter().any(|e| e.contains("seconds_per_pillar")), "{:?}", r.errors);
     }
 }

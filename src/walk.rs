@@ -391,6 +391,11 @@ impl WalkPainter {
 }
 
 #[cfg(test)]
+pub(crate) mod tests_support {
+    pub(crate) use super::tests::rows;
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{PillarColors, VideoConfig};

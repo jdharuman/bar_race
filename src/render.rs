@@ -131,7 +131,8 @@ fn render_pillars(week_dir: &Path, cfg: &VideoConfig, fmt: Format, opts: &Render
     let mut walk = WalkPainter::new(&rows, cfg, layout.width, layout.height, portrait)?;
     let mut cards = Painter::new(&crate::pillars::to_dataset(&rows), cfg, &ch, layout.clone())?;
     let values: Vec<f64> = rows.iter().map(|r| r.value).collect();
-    let mut follow = HeightFollow::new();
+    let (behind, ahead) = crate::camera::visible_window(layout.width, layout.height, portrait);
+    let mut follow = HeightFollow::with_window(behind, ahead);
     let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
     let audio = resolve_audio(cfg, week_dir, opts, tl.total_seconds())?;
     let mut enc = Encoder::start(&out, layout.width, layout.height, fps, audio)?;
@@ -158,10 +159,9 @@ fn render_pillars(week_dir: &Path, cfg: &VideoConfig, fmt: Format, opts: &Render
     Ok(out)
 }
 
-fn thumb_pillars(week_dir: &Path, cfg: &VideoConfig) -> Result<PathBuf> {
-    let rows = crate::pillars::load(week_dir)?;
-    let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
-    let layout = Layout::landscape(1.0, 10);
+/// Height scale for the pillar thumbnail: the last pillar settled, then shrunk so its
+/// photo stays below the big title.
+fn thumb_scale(rows: &[crate::pillars::Pillar]) -> f32 {
     let values: Vec<f64> = rows.iter().map(|r| r.value).collect();
     let p = (rows.len() - 1) as f64;
     let mut follow = HeightFollow::new();
@@ -169,6 +169,15 @@ fn thumb_pillars(week_dir: &Path, cfg: &VideoConfig) -> Result<PathBuf> {
     for _ in 0..120 {
         s = follow.step(&values, p, 1.0 / 60.0);
     }
+    s * 0.7
+}
+
+fn thumb_pillars(week_dir: &Path, cfg: &VideoConfig) -> Result<PathBuf> {
+    let rows = crate::pillars::load(week_dir)?;
+    let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
+    let layout = Layout::landscape(1.0, 10);
+    let p = (rows.len() - 1) as f64;
+    let s = thumb_scale(&rows);
     let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
     // the big title replaces the small walk title
     let no_title = VideoConfig { title: String::new(), ..cfg.clone() };
@@ -277,5 +286,15 @@ mod tests {
         assert_eq!(effective_top_n(&cfg, Format::Main, &opts).unwrap(), 15);
         let bad = RenderOpts { bars: Some(21), ..Default::default() };
         assert!(effective_top_n(&cfg, Format::Main, &bad).is_err());
+    }
+
+    #[test]
+    fn pillar_thumb_photo_clears_title() {
+        let rows = crate::walk::tests_support::rows(&[100.0, 200.0, 300.0, 800.0]);
+        let s = thumb_scale(&rows);
+        let wp = WalkPainter::new(&rows, &VideoConfig::default(), 1920, 1080, false).unwrap();
+        let (_, y, fw, _) = wp.pillar_rect(3, 3.0, s).unwrap();
+        let photo_top = y - fw * crate::camera::PHOTO_H / crate::camera::PILLAR_W;
+        assert!(photo_top >= 0.2 * 1080.0, "photo top {photo_top} under the title band");
     }
 }

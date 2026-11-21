@@ -14,7 +14,14 @@ pub struct Pillar {
 }
 
 /// Read pillars.csv leniently: the rows that parsed plus every problem (with line numbers).
+#[cfg(test)]
 pub fn parse(week_dir: &Path) -> Result<(Vec<Pillar>, Vec<String>)> {
+    parse_with_warnings(week_dir).map(|(rows, errors, _)| (rows, errors))
+}
+
+/// Like `parse`, plus warnings (e.g. a missing image, which falls back to initials).
+pub fn parse_with_warnings(week_dir: &Path) -> Result<(Vec<Pillar>, Vec<String>, Vec<String>)> {
+    let mut warnings = Vec::new();
     let path = week_dir.join("pillars.csv");
     let mut rdr = csv::Reader::from_path(&path).with_context(|| format!("reading {}", path.display()))?;
     let headers = rdr.headers()?.clone();
@@ -26,7 +33,7 @@ pub fn parse(week_dir: &Path) -> Result<(Vec<Pillar>, Vec<String>)> {
         }
     }
     if !errors.is_empty() {
-        return Ok((vec![], errors));
+        return Ok((vec![], errors, warnings));
     }
     let cols: Vec<Option<usize>> = ["label", "name", "value", "detail", "image", "source", "estimated"].iter().map(|n| col(n)).collect();
     let mut rows = Vec::new();
@@ -64,10 +71,12 @@ pub fn parse(week_dir: &Path) -> Result<(Vec<Pillar>, Vec<String>)> {
             p if p.is_empty() => None,
             p => {
                 let full = week_dir.join(&p);
-                if !full.exists() {
-                    errors.push(format!("pillars.csv line {line}: image not found: {p}"));
+                if full.exists() {
+                    Some(full)
+                } else {
+                    warnings.push(format!("pillars.csv line {line}: image not found: {p} (using initials)"));
+                    None
                 }
-                Some(full)
             }
         };
         rows.push(Pillar { label: get(0), name, value, detail: get(3), image, source: get(5), estimated });
@@ -75,11 +84,14 @@ pub fn parse(week_dir: &Path) -> Result<(Vec<Pillar>, Vec<String>)> {
     if rows.is_empty() && errors.is_empty() {
         errors.push("pillars.csv: no rows".into());
     }
-    Ok((rows, errors))
+    Ok((rows, errors, warnings))
 }
 
 pub fn load(week_dir: &Path) -> Result<Vec<Pillar>> {
-    let (rows, errors) = parse(week_dir)?;
+    let (rows, errors, warnings) = parse_with_warnings(week_dir)?;
+    for w in &warnings {
+        eprintln!("warning: {w}");
+    }
     if !errors.is_empty() {
         bail!("pillars.csv has errors:\n  {}", errors.join("\n  "));
     }
@@ -145,16 +157,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_image_is_error() {
-        let dir = week("label,name,value,image\n1,A,5,images/nope.jpg\n");
-        let (_, errs) = parse(&dir).unwrap();
-        assert!(errs.iter().any(|e| e.contains("nope.jpg")), "{errs:?}");
-    }
-
-    #[test]
     fn missing_required_column() {
         let dir = week("label,value\n1,5\n");
         let (_, errs) = parse(&dir).unwrap();
         assert!(errs.iter().any(|e| e.contains("name")), "{errs:?}");
+    }
+
+    #[test]
+    fn missing_image_is_warning_not_error() {
+        let dir = week("label,name,value,image\n1,A,5,images/nope.jpg\n");
+        let (rows, errs, warns) = parse_with_warnings(&dir).unwrap();
+        assert!(errs.is_empty(), "{errs:?}");
+        assert!(warns.iter().any(|w| w.contains("nope.jpg")), "{warns:?}");
+        assert_eq!(rows.len(), 1);
     }
 }
