@@ -3,3 +3,8 @@ weeks/*/out/
 tests/fixtures/week/out/
 
 /tests/fixtures/pillars/out/
+/topics.csv
+/topics_done.csv
+/videos/
+.venv/
+__pycache__/

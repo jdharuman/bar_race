@@ -1,0 +1,15 @@
+[project]
+name = "barrace-automation"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client>=2.100",
+    "google-auth-oauthlib>=1.2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
