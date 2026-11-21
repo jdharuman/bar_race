@@ -330,4 +330,4 @@ Unit test in render.rs: `effective_top_n(cfg, Format::Short, &opts)` returns 12 
   Add a `[[pace]]` section to show the feature (1990–2000 at 1.2).
 - [ ] **Step 2: README.** Document time formats, pace sections, `number_style`, `bar_colors`, `events.csv`, `theme`, the CLI flags, and the bundled music with its credits.
 - [ ] **Step 3: Verify.** Run `cargo test` (all green), then `time ./target/release/barrace render weeks/2026-11-23-sample --format both` and `barrace thumb`. Look at frames: mid-race, a caption, the leader badge, the Short with 12 bars, the end card. Expected: speed in line with the global constraint; record it in the commit message.
-- [ ] **Step 6:** Commit with the message `docs: sample week with captions, README for v2`.
+- [ ] **Step 4:** Commit with the message `docs: sample week with captions, README for v2`.
