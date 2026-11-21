@@ -1,5 +1,6 @@
 use crate::config::{ChannelConfig, VideoConfig};
 use crate::data::Dataset;
+use crate::events::Event;
 use crate::fmt::format_value;
 use crate::layout::Layout;
 use crate::scene::{BarState, FrameState};
@@ -26,6 +27,13 @@ fn with_alpha(mut c: Color, a: f32) -> Color {
     c
 }
 
+/// Per-frame overlays: (index, fade alpha) of the caption event and the leader item.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Overlay {
+    pub caption: Option<(usize, f32)>,
+    pub leader: Option<(usize, f32)>,
+}
+
 pub struct Painter {
     ds: Dataset,
     cfg: VideoConfig,
@@ -34,6 +42,9 @@ pub struct Painter {
     text: Text,
     item_colors: Vec<Color>,
     images: Vec<Option<Pixmap>>,
+    /// Same images at leader-badge size.
+    badges: Vec<Option<Pixmap>>,
+    events: Vec<Event>,
     bg: Color,
     fg: Color,
     grid_a: f32,
@@ -75,21 +86,25 @@ impl Painter {
                 .unwrap_or(cat_colors[it.category.as_str()])
             })
             .collect();
-        let d = layout.bar_height().round().max(1.0) as u32;
-        let images = ds
-            .items
-            .iter()
-            .map(|it| {
-                let path = it.image.as_ref()?;
-                match load_circle_image(path, d) {
-                    Ok(pm) => Some(pm),
-                    Err(e) => {
-                        eprintln!("warning: image {}: {e:#}; using initials", path.display());
-                        None
+        let load_all = |d: u32, warn: bool| -> Vec<Option<Pixmap>> {
+            ds.items
+                .iter()
+                .map(|it| {
+                    let path = it.image.as_ref()?;
+                    match load_circle_image(path, d) {
+                        Ok(pm) => Some(pm),
+                        Err(e) => {
+                            if warn {
+                                eprintln!("warning: image {}: {e:#}; using initials", path.display());
+                            }
+                            None
+                        }
                     }
-                }
-            })
-            .collect();
+                })
+                .collect()
+        };
+        let images = load_all(layout.bar_height().round().max(1.0) as u32, true);
+        let badges = load_all(layout.badge_box().2.round().max(1.0) as u32, false);
         Ok(Painter {
             ds: ds.clone(),
             cfg: cfg.clone(),
@@ -98,6 +113,8 @@ impl Painter {
             text: Text::new(),
             item_colors,
             images,
+            badges,
+            events: Vec::new(),
             bg: hex(&ch.colors().0),
             fg: hex(&ch.colors().1),
             grid_a: if ch.theme == crate::config::Theme::Light { 0.12 } else { 0.10 },
@@ -111,11 +128,58 @@ impl Painter {
         &self.layout
     }
 
+    fn panel(&self, pm: &mut Pixmap, (x, y, w, h): (f32, f32, f32, f32), a: f32) {
+        let mut paint = Paint::default();
+        paint.set_color(with_alpha(self.bg, 0.85 * a));
+        paint.anti_alias = true;
+        let r = (h * 0.12).min(w * 0.12);
+        if let Some(path) = rounded_rect(x, y, w, h, r) {
+            pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+
+    fn paint_caption(&mut self, pm: &mut Pixmap, i: usize, a: f32) {
+        let Some(ev) = self.events.get(i).cloned() else { return };
+        let b @ (x, y, w, h) = self.layout.caption_box();
+        self.panel(pm, b, a);
+        let pad = w * 0.04;
+        let (cx, inner) = (x + w / 2.0, w - 2.0 * pad);
+        let red = with_alpha(hex("#e11d48"), a);
+        let lines = [(&ev.headline, 0.20, 0.16, true, red), (&ev.big, 0.50, 0.42, true, with_alpha(self.fg, a)), (&ev.caption, 0.82, 0.16, false, with_alpha(self.fg, 0.85 * a))];
+        for (s, yf, hf, bold, color) in lines {
+            let size = self.fit_size(s, h * hf, bold, inner);
+            self.txt(pm, s, cx, y + h * yf, size, bold, color, Align::Center);
+        }
+    }
+
+    fn paint_badge(&mut self, pm: &mut Pixmap, i: usize, a: f32) {
+        let (x, y, s, _) = self.layout.badge_box();
+        match &self.badges[i] {
+            Some(img) => {
+                let paint = PixmapPaint { opacity: a, ..Default::default() };
+                pm.draw_pixmap(x.round() as i32, y.round() as i32, img.as_ref(), &paint, Transform::identity(), None);
+            }
+            None => {
+                let c = self.item_colors[i];
+                let mut paint = Paint::default();
+                paint.set_color(Color::from_rgba(c.red() * 0.55, c.green() * 0.55, c.blue() * 0.55, a).unwrap());
+                paint.anti_alias = true;
+                let circle = PathBuilder::from_circle(x + s / 2.0, y + s / 2.0, s / 2.0).unwrap();
+                pm.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
+                let ini = initials(&self.ds.items[i].name);
+                self.txt(pm, &ini, x + s / 2.0, y + s / 2.0, s * 0.4, true, with_alpha(Color::WHITE, a), Align::Center);
+            }
+        }
+    }
+
     /// Thumbnail: race frame without the small title block, oversized title in the header area.
     pub fn paint_thumb(&mut self, pm: &mut Pixmap, fs: &FrameState) {
         self.last_strings.clear();
         pm.fill(self.bg);
         self.paint_race_inner(pm, fs, false);
+        if let Some(i) = fs.leader {
+            self.paint_badge(pm, i, 1.0);
+        }
         let l = self.layout.clone();
         let title = self.cfg.title.clone();
         let size = self.fit_size(&title, l.title_size * 2.2, true, l.width as f32 * 0.92);
@@ -137,10 +201,25 @@ impl Painter {
         self.last_strings.push(s.to_string());
     }
 
+    pub fn set_events(&mut self, events: Vec<Event>) {
+        self.events = events;
+    }
+
     pub fn paint(&mut self, pm: &mut Pixmap, phase: &Phase, fs: &FrameState) {
+        self.paint_with(pm, phase, fs, &Overlay::default());
+    }
+
+    /// Paint a frame plus the caption / leader badge overlays (each with its fade alpha).
+    pub fn paint_with(&mut self, pm: &mut Pixmap, phase: &Phase, fs: &FrameState, ov: &Overlay) {
         self.last_strings.clear();
         pm.fill(self.bg);
         self.paint_race(pm, fs);
+        if let Some((i, a)) = ov.caption {
+            self.paint_caption(pm, i, a);
+        }
+        if let Some((i, a)) = ov.leader {
+            self.paint_badge(pm, i, a);
+        }
         match *phase {
             Phase::Intro { t } => self.paint_intro(pm, t),
             Phase::End { t } => self.paint_end(pm, t),
@@ -252,8 +331,10 @@ impl Painter {
         }
         // year counter
         let year = crate::fmt::format_time(fs.t, self.ds.granularity);
-        let align = if l.year_centered { Align::Center } else { Align::Right };
-        self.txt(pm, &year, l.year_pos.0, l.year_pos.1, l.year_size, true, with_alpha(self.fg, self.year_a), align);
+        let (yx, yy, yw, yh) = l.year_box();
+        let ys = self.fit_size(&year, l.year_size.min(yh / 1.2), true, yw);
+        let (x, align) = if l.portrait { (yx + yw / 2.0, Align::Center) } else { (yx + yw, Align::Right) };
+        self.txt(pm, &year, x, yy + yh / 2.0, ys, true, with_alpha(self.fg, self.year_a), align);
         self.paint_axis(pm, fs.axis_max);
         // bars, bottom-most first so overtaking bars draw on top
         for b in fs.bars.iter().rev() {
@@ -387,6 +468,23 @@ fn load_circle_image(path: &Path, d: u32) -> Result<Pixmap> {
     let mut out = Pixmap::new(d, d).unwrap();
     out.draw_pixmap(0, 0, square.as_ref(), &PixmapPaint::default(), Transform::identity(), Some(&mask));
     Ok(out)
+}
+
+/// Rectangle with all four corners rounded by r.
+fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
+    const K: f32 = 0.552_284_8;
+    let mut pb = PathBuilder::new();
+    pb.move_to(x + r, y);
+    pb.line_to(x + w - r, y);
+    pb.cubic_to(x + w - r + r * K, y, x + w, y + r - r * K, x + w, y + r);
+    pb.line_to(x + w, y + h - r);
+    pb.cubic_to(x + w, y + h - r + r * K, x + w - r + r * K, y + h, x + w - r, y + h);
+    pb.line_to(x + r, y + h);
+    pb.cubic_to(x + r - r * K, y + h, x, y + h - r + r * K, x, y + h - r);
+    pb.line_to(x, y + r);
+    pb.cubic_to(x, y + r - r * K, x + r - r * K, y, x + r, y);
+    pb.close();
+    pb.finish()
 }
 
 /// Bar from (x, y) of width w and height h whose right end is rounded with radius r.
@@ -683,5 +781,69 @@ mod tests {
         assert!(count_color_in_row(&pm, y as u32, [0x38, 0xbd, 0xf8]) > 100, "white image → palette[0]");
         let (_, pm, y) = one_item_png([0, 160, 60, 255], crate::config::BarColors::Category);
         assert!(count_color_in_row(&pm, y as u32, [0x38, 0xbd, 0xf8]) > 100, "category mode ignores image");
+    }
+
+    fn fixture_events() -> Vec<crate::events::Event> {
+        vec![crate::events::Event {
+            from: 2000.0,
+            to: 2003.0,
+            headline: "US produces".into(),
+            big: "90%".into(),
+            caption: "World's Oil".into(),
+        }]
+    }
+
+    #[test]
+    fn caption_drawn_when_active() {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let fs = settle(&ds, 10, 2001.0);
+        let mut p = painter(&ds);
+        p.set_events(fixture_events());
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        let ov = Overlay { caption: Some((0, 1.0)), leader: None };
+        p.paint_with(&mut pm, &Phase::Race { t: 2001.0 }, &fs, &ov);
+        for s in ["US produces", "90%", "World's Oil"] {
+            assert!(p.last_strings.iter().any(|x| x == s), "{s} missing: {:?}", p.last_strings);
+        }
+    }
+
+    #[test]
+    fn long_caption_fits_box() {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let empty = crate::scene::FrameState { t: 2001.0, bars: vec![], axis_max: 1.0, leader: None };
+        let mut p = painter(&ds);
+        let mut ev = fixture_events();
+        ev[0].caption = "an extremely long caption that goes on and on well past any sensible width for a box".into();
+        ev[0].headline = "a very long headline that also does not fit at its natural size anywhere".into();
+        p.set_events(ev);
+        let (w, h) = (p.layout().width, p.layout().height);
+        let mut without = Pixmap::new(w, h).unwrap();
+        p.paint_with(&mut without, &Phase::Race { t: 2001.0 }, &empty, &Overlay::default());
+        let mut with = Pixmap::new(w, h).unwrap();
+        p.paint_with(&mut with, &Phase::Race { t: 2001.0 }, &empty, &Overlay { caption: Some((0, 1.0)), leader: None });
+        let (bx, by, bw, bh) = p.layout().caption_box();
+        for y in 0..h {
+            for x in 0..w {
+                if with.pixel(x, y) != without.pixel(x, y) {
+                    let (fx, fy) = (x as f32, y as f32);
+                    assert!(fx >= bx - 2.0 && fx <= bx + bw + 2.0 && fy >= by - 2.0 && fy <= by + bh + 2.0, "pixel {x},{y} outside caption box");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn badge_drawn_for_leader() {
+        let dir = crate::testutil::temp_week("name\n");
+        let png = dir.join("red.png");
+        image::RgbaImage::from_pixel(64, 64, image::Rgba([255, 0, 0, 255])).save(&png).unwrap();
+        let ds = one_item(Some(png));
+        let fs = settle(&ds, 10, 2000.5);
+        let mut p = Painter::new(&ds, &VideoConfig { bar_colors: crate::config::BarColors::Category, ..Default::default() }, &ChannelConfig::default(), Layout::landscape(0.5, 10)).unwrap();
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint_with(&mut pm, &Phase::Race { t: 2000.5 }, &fs, &Overlay { caption: None, leader: Some((0, 1.0)) });
+        let (bx, by, bw, bh) = p.layout().badge_box();
+        let px = pm.pixel((bx + bw / 2.0) as u32, (by + bh / 2.0) as u32).unwrap();
+        assert!(px.red() > 230 && px.green() < 30, "{px:?}");
     }
 }

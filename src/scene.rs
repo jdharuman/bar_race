@@ -46,6 +46,38 @@ pub struct FrameState {
     pub t: f64,
     pub bars: Vec<BarState>,
     pub axis_max: f64,
+    /// Rank-1 item at this time, if any.
+    pub leader: Option<usize>,
+}
+
+/// Shows one item at a time; switching fades the old one out fully, then the new one in.
+pub struct Crossfade {
+    half: f64,
+    shown: Option<usize>,
+    alpha: f64,
+}
+
+impl Crossfade {
+    /// `fade` = total switch time in seconds (half out, half in).
+    pub fn new(fade: f64) -> Crossfade {
+        Crossfade { half: fade / 2.0, shown: None, alpha: 0.0 }
+    }
+
+    pub fn step(&mut self, target: Option<usize>, dt: f64) -> Option<(usize, f32)> {
+        let d = dt / self.half;
+        if self.shown == target {
+            self.alpha = (self.alpha + d).min(1.0);
+        } else if self.shown.is_some() && self.alpha > 0.0 {
+            self.alpha = (self.alpha - d).max(0.0);
+            if self.alpha == 0.0 {
+                self.shown = target;
+            }
+        } else {
+            self.shown = target;
+            self.alpha = 0.0;
+        }
+        self.shown.filter(|_| self.alpha > 0.0).map(|i| (i, self.alpha as f32))
+    }
 }
 
 pub struct RankTracker {
@@ -106,7 +138,7 @@ impl RankTracker {
             })
             .collect();
         bars.sort_by(|a, b| a.slot.total_cmp(&b.slot));
-        FrameState { t, bars, axis_max: self.axis_max }
+        FrameState { t, bars, axis_max: self.axis_max, leader: order.first().copied() }
     }
 }
 
@@ -244,5 +276,49 @@ mod tests {
         assert!((value_at(&it, june - m / 2.0, m).unwrap().0 - 6.0).abs() < 1e-9);
         assert_eq!(value_at(&it, june - m, m), None);
         assert_eq!(value_at(&it, june + m, m), None);
+    }
+
+    #[test]
+    fn crossfade_switches_through_zero() {
+        let mut c = Crossfade::new(0.4);
+        let dt = 1.0 / 60.0;
+        let mut last = None;
+        for _ in 0..60 {
+            last = c.step(Some(0), dt);
+        }
+        assert_eq!(last, Some((0, 1.0)));
+        let mut saw_one = false;
+        for _ in 0..60 {
+            match c.step(Some(1), dt) {
+                Some((1, _)) => saw_one = true,
+                Some((0, a)) => assert!(!saw_one && a < 1.0),
+                None => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(saw_one);
+        assert_eq!(c.step(Some(1), dt), Some((1, 1.0)));
+        for _ in 0..60 {
+            c.step(None, dt);
+        }
+        assert_eq!(c.step(None, dt), None);
+    }
+
+    #[test]
+    fn crossfade_flip_flop_no_double() {
+        let mut c = Crossfade::new(0.4);
+        for f in 0..120 {
+            if let Some((_, a)) = c.step(Some(f % 2), 1.0 / 60.0) {
+                assert!((0.0..=1.0).contains(&a));
+            }
+        }
+    }
+
+    #[test]
+    fn leader_is_top_rank() {
+        let ds = crate::data::Dataset::load(std::path::Path::new("tests/fixtures/week")).unwrap();
+        let mut t = RankTracker::new(ds.items.len(), 10);
+        let fs = t.step(&ds, 2001.0, 1.0 / 60.0);
+        assert_eq!(fs.leader.map(|i| ds.items[i].name.as_str()), Some("Beta"));
     }
 }

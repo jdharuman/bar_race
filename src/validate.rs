@@ -26,6 +26,10 @@ pub fn run(week_dir: &Path) -> Result<Report> {
             false
         }
     };
+    match crate::events::parse(week_dir) {
+        Ok((_, ev_errors)) => errors.extend(ev_errors),
+        Err(e) => errors.push(format!("events.csv: {e:#}")),
+    }
     if !reviewed {
         warnings.push("reviewed = false: check data.csv, then set reviewed = true in video.toml".into());
     }

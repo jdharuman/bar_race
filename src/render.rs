@@ -1,9 +1,9 @@
 use crate::config::{ChannelConfig, VideoConfig};
 use crate::data::Dataset;
-use crate::draw::Painter;
+use crate::draw::{Overlay, Painter};
 use crate::encode::{AudioSpec, Encoder};
 use crate::layout::Layout;
-use crate::scene::RankTracker;
+use crate::scene::{Crossfade, RankTracker};
 use crate::timeline::{Format, Phase, Timeline};
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
@@ -76,7 +76,14 @@ pub fn render(week_dir: &Path, fmt: Format, preview: bool) -> Result<PathBuf> {
     let out_dir = week_dir.join("out");
     std::fs::create_dir_all(&out_dir)?;
     let out = out_dir.join(name);
+    let (events, ev_errors) = crate::events::parse(week_dir)?;
+    if !ev_errors.is_empty() {
+        bail!("events.csv has errors:\n  {}", ev_errors.join("\n  "));
+    }
     let mut painter = Painter::new(&ds, &cfg, &ch, layout.clone())?;
+    painter.set_events(events.clone());
+    let mut caption_fade = Crossfade::new(0.3);
+    let mut leader_fade = Crossfade::new(0.4);
     let mut tracker = RankTracker::new(ds.items.len(), layout.top_n);
     let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
     let audio = match pick_music(&cfg, week_dir, Path::new("music")) {
@@ -98,7 +105,11 @@ pub fn render(week_dir: &Path, fmt: Format, preview: bool) -> Result<PathBuf> {
             Phase::Hold | Phase::End { .. } => tl.end,
         };
         let fs = tracker.step(&ds, year, dt);
-        painter.paint(&mut pm, &phase, &fs);
+        let ov = Overlay {
+            caption: caption_fade.step(crate::events::active(&events, year), dt),
+            leader: leader_fade.step(fs.leader, dt),
+        };
+        painter.paint_with(&mut pm, &phase, &fs, &ov);
         enc.write_frame(pm.data())?;
         if total >= 10 && f % (total / 10) == 0 {
             eprintln!("{name}: {}%", f * 100 / total);

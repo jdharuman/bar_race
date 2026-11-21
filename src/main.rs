@@ -2,6 +2,7 @@ mod config;
 mod data;
 mod draw;
 mod encode;
+mod events;
 mod fmt;
 mod layout;
 mod render;
