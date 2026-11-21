@@ -3,6 +3,14 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// A stretch of data time played at its own pace.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PaceSection {
+    pub from: f64,
+    pub to: f64,
+    pub seconds_per_year: f64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct VideoConfig {
@@ -12,7 +20,9 @@ pub struct VideoConfig {
     pub unit_suffix: String,
     pub top_n: usize,
     pub top_n_short: usize,
-    pub seconds_per_year: f64,
+    /// Seconds per calendar year; None = default for the data's granularity.
+    pub seconds_per_year: Option<f64>,
+    pub pace: Vec<PaceSection>,
     pub short_seconds: f64,
     pub music: Option<PathBuf>,
     pub reviewed: bool,
@@ -28,7 +38,8 @@ impl Default for VideoConfig {
             unit_suffix: String::new(),
             top_n: 10,
             top_n_short: 8,
-            seconds_per_year: 3.5,
+            seconds_per_year: None,
+            pace: Vec::new(),
             short_seconds: 58.0,
             music: None,
             reviewed: false,
@@ -47,11 +58,27 @@ impl VideoConfig {
         if !(1..=20).contains(&self.top_n_short) {
             p.push(format!("top_n_short must be 1–20 (got {})", self.top_n_short));
         }
-        if !(self.seconds_per_year > 0.0 && self.seconds_per_year <= 60.0) {
-            p.push(format!("seconds_per_year must be > 0 and ≤ 60 (got {})", self.seconds_per_year));
+        let pace_ok = |s: f64| s > 0.0 && s <= 60.0;
+        if let Some(s) = self.seconds_per_year.filter(|s| !pace_ok(*s)) {
+            p.push(format!("seconds_per_year must be > 0 and ≤ 60 (got {s})"));
         }
-        if !(self.short_seconds > 5.0 && self.short_seconds <= 180.0) {
-            p.push(format!("short_seconds must be > 5 and ≤ 180 (got {})", self.short_seconds));
+        if !(8.0..=180.0).contains(&self.short_seconds) {
+            p.push(format!("short_seconds must be 8–180 (got {})", self.short_seconds));
+        }
+        let mut secs: Vec<&PaceSection> = self.pace.iter().collect();
+        secs.sort_by(|a, b| a.from.total_cmp(&b.from));
+        for s in &secs {
+            if !(s.from < s.to) {
+                p.push(format!("[[pace]] needs from < to (got {}–{})", s.from, s.to));
+            }
+            if !pace_ok(s.seconds_per_year) {
+                p.push(format!("[[pace]] seconds_per_year must be > 0 and ≤ 60 (got {})", s.seconds_per_year));
+            }
+        }
+        for w in secs.windows(2) {
+            if w[0].to > w[1].from {
+                p.push(format!("[[pace]] sections overlap: {}–{} and {}–{}", w[0].from, w[0].to, w[1].from, w[1].to));
+            }
         }
         p
     }
@@ -110,10 +137,35 @@ mod tests {
 
     #[test]
     fn out_of_range_values_reported() {
-        let bad = VideoConfig { top_n: 0, top_n_short: 50, seconds_per_year: -1.0, short_seconds: 3.0, ..Default::default() };
+        let bad = VideoConfig { top_n: 0, top_n_short: 50, seconds_per_year: Some(-1.0), short_seconds: 3.0, ..Default::default() };
         let p = bad.problems().join("\n");
         for key in ["top_n ", "top_n_short", "seconds_per_year", "short_seconds"] {
             assert!(p.contains(key), "missing {key} in {p}");
         }
+    }
+
+    #[test]
+    fn overlapping_sections_rejected() {
+        let c = VideoConfig {
+            pace: vec![
+                PaceSection { from: 1600.0, to: 1800.0, seconds_per_year: 0.45 },
+                PaceSection { from: 1700.0, to: 1900.0, seconds_per_year: 1.0 },
+            ],
+            ..Default::default()
+        };
+        assert!(c.problems().join(" ").contains("overlap"), "{:?}", c.problems());
+    }
+
+    #[test]
+    fn backwards_section_rejected() {
+        let c = VideoConfig { pace: vec![PaceSection { from: 1800.0, to: 1800.0, seconds_per_year: 1.0 }], ..Default::default() };
+        assert!(c.problems().join(" ").contains("from < to"), "{:?}", c.problems());
+    }
+
+    #[test]
+    fn pace_toml_accepts_integers() {
+        let c: VideoConfig = toml::from_str("[[pace]]\nfrom = 1600\nto = 1800\nseconds_per_year = 0.45\n").unwrap();
+        assert_eq!(c.pace[0].from, 1600.0);
+        assert_eq!(c.seconds_per_year, None);
     }
 }

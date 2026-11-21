@@ -52,7 +52,7 @@ fn render_main_preview() {
     let (w, h, fps, dur, _) = probe(&dir.join("out/main.mp4"));
     assert_eq!((w, h), (960, 540));
     assert_eq!(fps, "30/1");
-    assert!((dur - 11.5).abs() < 0.1, "duration {dur}");
+    assert!((dur - 12.5).abs() < 0.1, "duration {dur}");
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn render_with_music_has_audio() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let (_, _, _, dur, audio) = probe(&dir.join("out/main.mp4"));
     assert!(audio, "no audio stream");
-    assert!((dur - 11.5).abs() < 0.15, "duration {dur}");
+    assert!((dur - 12.5).abs() < 0.15, "duration {dur}");
 }
 
 #[test]
