@@ -226,7 +226,7 @@ impl Painter {
             self.txt(pm, &subtitle, l.title_pos.0, y, ss, false, with_alpha(self.fg, 0.7), Align::Left);
         }
         // year counter
-        let year = format!("{}", fs.year.floor() as i64);
+        let year = crate::fmt::format_time(fs.t, self.ds.granularity);
         let align = if l.year_centered { Align::Center } else { Align::Right };
         self.txt(pm, &year, l.year_pos.0, l.year_pos.1, l.year_size, true, with_alpha(self.fg, 0.25), align);
         self.paint_axis(pm, fs.axis_max);
@@ -396,7 +396,7 @@ mod tests {
         let mut p = painter(&ds);
         let l = p.layout().clone();
         let mut pm = Pixmap::new(l.width, l.height).unwrap();
-        p.paint(&mut pm, &Phase::Race { year: 2001.0 }, &fs);
+        p.paint(&mut pm, &Phase::Race { t: 2001.0 }, &fs);
         // top bar at 2001 is Beta (22), category Y = second category seen → palette[1] #f472b6
         let y = l.slot_center_y(0.0) as u32;
         assert!(count_color_in_row(&pm, y, [0xf4, 0x72, 0xb6]) > 50);
@@ -408,7 +408,7 @@ mod tests {
         let fs = settle(&ds, 10, 2002.0);
         let mut p = painter(&ds);
         let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
-        p.paint(&mut pm, &Phase::Race { year: 2002.0 }, &fs);
+        p.paint(&mut pm, &Phase::Race { t: 2002.0 }, &fs);
         assert!(p.last_strings.iter().any(|s| s == "Delta"));
     }
 
@@ -418,7 +418,7 @@ mod tests {
             name: n.into(),
             category: cat.into(),
             image: None,
-            points: vec![Point { year: 2000, value: v, estimated: false }, Point { year: 2001, value: v, estimated: false }],
+            points: vec![Point { t: 2000 as f64, value: v, estimated: false }, Point { t: 2001 as f64, value: v, estimated: false }],
             sources: vec![],
         };
         let ds = Dataset::from_items(vec![mk("Pos", "P", 100.0), mk("Neg", "N", -5.0)]);
@@ -426,7 +426,7 @@ mod tests {
         let mut p = painter(&ds);
         let l = p.layout().clone();
         let mut pm = Pixmap::new(l.width, l.height).unwrap();
-        p.paint(&mut pm, &Phase::Race { year: 2000.5 }, &fs);
+        p.paint(&mut pm, &Phase::Race { t: 2000.5 }, &fs);
         let y = l.slot_center_y(1.0) as u32;
         // category N is palette[1]; no bar pixels of that colour in the Neg row
         assert_eq!(count_color_in_row(&pm, y, [0xf4, 0x72, 0xb6]), 0);
@@ -438,7 +438,7 @@ mod tests {
             name: "Red Land".into(),
             category: "X".into(),
             image,
-            points: vec![Point { year: 2000, value: 10.0, estimated: false }, Point { year: 2001, value: 10.0, estimated: false }],
+            points: vec![Point { t: 2000 as f64, value: 10.0, estimated: false }, Point { t: 2001 as f64, value: 10.0, estimated: false }],
             sources: vec!["https://www.worldbank.org/x".into()],
         }])
     }
@@ -452,7 +452,7 @@ mod tests {
         let fs = settle(&ds, 10, 2000.5);
         let mut p = painter(&ds);
         let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
-        p.paint(&mut pm, &Phase::Race { year: 2000.5 }, &fs);
+        p.paint(&mut pm, &Phase::Race { t: 2000.5 }, &fs);
         let (cx, cy) = p.bar_tip(&fs.bars[0], fs.axis_max);
         let px = pm.pixel(cx as u32, cy as u32).unwrap();
         assert!(px.red() > 230 && px.green() < 30 && px.blue() < 30, "{px:?}");
@@ -464,7 +464,7 @@ mod tests {
         let fs = settle(&ds, 10, 2000.5);
         let mut p = painter(&ds);
         let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
-        p.paint(&mut pm, &Phase::Race { year: 2000.5 }, &fs);
+        p.paint(&mut pm, &Phase::Race { t: 2000.5 }, &fs);
         assert!(p.last_strings.iter().any(|s| s == "RL"), "{:?}", p.last_strings);
     }
 
@@ -510,7 +510,7 @@ mod tests {
         let mut p = Painter::new(&ds, &cfg, &ChannelConfig::default(), Layout::portrait(0.5, 8)).unwrap();
         let (w, h) = (p.layout().width, p.layout().height);
         let mut pm = Pixmap::new(w, h).unwrap();
-        p.paint(&mut pm, &Phase::Race { year: 2001.0 }, &fs);
+        p.paint(&mut pm, &Phase::Race { t: 2001.0 }, &fs);
         let edge = w - w * 4 / 100;
         let lit = (0..h * 15 / 100)
             .flat_map(|y| (edge..w).map(move |x| (x, y)))

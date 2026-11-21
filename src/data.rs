@@ -2,9 +2,42 @@ use anyhow::{bail, Context, Result};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
+/// How finely the data is sampled. Ordered coarse → fine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Granularity {
+    Year,
+    Quarter,
+    Month,
+}
+
+/// "1999" → 1999.0, "1999-02" → 1999 + 1/12, "1999-Q2" → 1999.25 (fractional years).
+pub fn parse_time(s: &str) -> Option<(f64, Granularity)> {
+    let s = s.trim();
+    let year_part = s.get(0..4)?;
+    if !year_part.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let year: f64 = year_part.parse().ok()?;
+    let rest = &s[4..];
+    if rest.is_empty() {
+        return Some((year, Granularity::Year));
+    }
+    let rest = rest.strip_prefix('-')?;
+    if let Some(q) = rest.strip_prefix('Q').or_else(|| rest.strip_prefix('q')) {
+        let q: u32 = q.parse().ok().filter(|q| (1..=4).contains(q))?;
+        return Some((year + (q - 1) as f64 / 4.0, Granularity::Quarter));
+    }
+    if rest.len() == 2 && rest.bytes().all(|b| b.is_ascii_digit()) {
+        let m: u32 = rest.parse().ok().filter(|m| (1..=12).contains(m))?;
+        return Some((year + (m - 1) as f64 / 12.0, Granularity::Month));
+    }
+    None
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
-    pub year: i32,
+    /// Time in fractional years.
+    pub t: f64,
     pub value: f64,
     pub estimated: bool,
 }
@@ -21,12 +54,14 @@ pub struct Item {
 #[derive(Debug, Clone)]
 pub struct Dataset {
     pub items: Vec<Item>,
-    pub first_year: i32,
-    pub last_year: i32,
+    pub first: f64,
+    pub last: f64,
+    pub granularity: Granularity,
 }
 
 /// Parse data.csv leniently: returns whatever items parsed plus every problem found.
-pub fn parse(week_dir: &Path) -> Result<(Vec<Item>, Vec<String>)> {
+/// Also returns the finest granularity written in the `year` column.
+pub fn parse(week_dir: &Path) -> Result<(Vec<Item>, Vec<String>, Granularity)> {
     let path = week_dir.join("data.csv");
     let mut rdr = csv::Reader::from_path(&path).with_context(|| format!("reading {}", path.display()))?;
     let headers = rdr.headers()?.clone();
@@ -42,11 +77,12 @@ pub fn parse(week_dir: &Path) -> Result<(Vec<Item>, Vec<String>)> {
         }
     }
     if !errors.is_empty() {
-        return Ok((vec![], errors));
+        return Ok((vec![], errors, Granularity::Year));
     }
     let mut items: Vec<Item> = Vec::new();
     let mut seen = HashSet::new();
     let mut missing_images = HashSet::new();
+    let mut granularity = Granularity::Year;
     for (i, rec) in rdr.records().enumerate() {
         let line = i + 2;
         let rec = match rec {
@@ -62,8 +98,8 @@ pub fn parse(week_dir: &Path) -> Result<(Vec<Item>, Vec<String>)> {
             errors.push(format!("line {line}: empty name"));
             continue;
         }
-        let Ok(year) = get("year").parse::<i32>() else {
-            errors.push(format!("line {line}: bad year '{}'", get("year")));
+        let Some((t, g)) = parse_time(get("year")) else {
+            errors.push(format!("line {line}: bad year '{}' (use 1999, 1999-02 or 1999-Q2)", get("year")));
             continue;
         };
         let Ok(value) = get("value").parse::<f64>() else {
@@ -82,8 +118,8 @@ pub fn parse(week_dir: &Path) -> Result<(Vec<Item>, Vec<String>)> {
                 continue;
             }
         };
-        if !seen.insert((name.clone(), year)) {
-            errors.push(format!("line {line}: duplicate row for '{name}' {year}"));
+        if !seen.insert((name.clone(), (t * 1e6).round() as i64)) {
+            errors.push(format!("line {line}: duplicate row for '{name}' {}", get("year")));
             continue;
         }
         let image = match get("image") {
@@ -116,31 +152,58 @@ pub fn parse(week_dir: &Path) -> Result<(Vec<Item>, Vec<String>)> {
         if !source.is_empty() && !item.sources.contains(&source) {
             item.sources.push(source);
         }
-        item.points.push(Point { year, value, estimated });
+        item.points.push(Point { t, value, estimated });
+        granularity = granularity.max(g);
     }
     for it in &mut items {
-        it.points.sort_by_key(|p| p.year);
+        it.points.sort_by(|a, b| a.t.total_cmp(&b.t));
     }
     if items.is_empty() && errors.is_empty() {
         errors.push("no data rows".into());
     }
-    Ok((items, errors))
+    Ok((items, errors, granularity))
+}
+
+/// Finest granularity among all points: a point off whole years/quarters means finer data.
+fn granularity_of(items: &[Item]) -> Granularity {
+    let mut g = Granularity::Year;
+    for p in items.iter().flat_map(|i| &i.points) {
+        let frac = p.t - p.t.floor();
+        let is = |n: f64| ((frac * n) - (frac * n).round()).abs() < 1e-6;
+        if !is(1.0) {
+            g = g.max(if is(4.0) { Granularity::Quarter } else { Granularity::Month });
+        }
+    }
+    g
 }
 
 impl Dataset {
     pub fn from_items(items: Vec<Item>) -> Dataset {
-        let years = items.iter().flat_map(|i| i.points.iter().map(|p| p.year));
-        let first_year = years.clone().min().unwrap_or(0);
-        let last_year = years.max().unwrap_or(0);
-        Dataset { items, first_year, last_year }
+        let ts = items.iter().flat_map(|i| i.points.iter().map(|p| p.t));
+        let first = ts.clone().fold(f64::INFINITY, f64::min);
+        let last = ts.fold(f64::NEG_INFINITY, f64::max);
+        let (first, last) = if first.is_finite() { (first, last) } else { (0.0, 0.0) };
+        let granularity = granularity_of(&items);
+        Dataset { items, first, last, granularity }
+    }
+
+    /// Length of one data step in years.
+    pub fn step(&self) -> f64 {
+        match self.granularity {
+            Granularity::Year => 1.0,
+            Granularity::Quarter => 0.25,
+            Granularity::Month => 1.0 / 12.0,
+        }
     }
 
     pub fn load(week_dir: &Path) -> Result<Dataset> {
-        let (items, errors) = parse(week_dir)?;
+        let (items, errors, g) = parse(week_dir)?;
         if !errors.is_empty() {
             bail!("data.csv has errors:\n  {}", errors.join("\n  "));
         }
-        Ok(Dataset::from_items(items))
+        let mut ds = Dataset::from_items(items);
+        ds.granularity = ds.granularity.max(g);
+        Ok(ds)
     }
 
     pub fn estimated_share(&self) -> f64 {
@@ -163,8 +226,8 @@ mod tests {
     fn loads_fixture() {
         let d = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
         assert_eq!(d.items.len(), 4);
-        assert_eq!((d.first_year, d.last_year), (2000, 2003));
-        assert!(d.items.iter().all(|i| i.points.windows(2).all(|w| w[0].year < w[1].year)));
+        assert_eq!((d.first, d.last), (2000.0, 2003.0));
+        assert!(d.items.iter().all(|i| i.points.windows(2).all(|w| w[0].t < w[1].t)));
     }
 
     #[test]
@@ -178,5 +241,34 @@ mod tests {
     fn estimated_share_counts_points() {
         let d = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
         assert!((d.estimated_share() - 1.0 / 13.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parses_time_formats() {
+        assert_eq!(parse_time("1999"), Some((1999.0, Granularity::Year)));
+        assert_eq!(parse_time("1999-02"), Some((1999.0 + 1.0 / 12.0, Granularity::Month)));
+        assert_eq!(parse_time("1999-Q2"), Some((1999.25, Granularity::Quarter)));
+        assert_eq!(parse_time("1999-q4"), Some((1999.75, Granularity::Quarter)));
+        assert_eq!(parse_time("1999-13"), None);
+        assert_eq!(parse_time("1999-00"), None);
+        assert_eq!(parse_time("1999-Q5"), None);
+        assert_eq!(parse_time("abc"), None);
+    }
+
+    #[test]
+    fn mixed_granularity_uses_finest() {
+        let dir = temp_week(&format!("{HEADER}A,X,,2000-06,2,,false\nA,X,,2000,1,,false\n"));
+        let d = Dataset::load(&dir).unwrap();
+        assert_eq!(d.granularity, Granularity::Month);
+        assert!((d.step() - 1.0 / 12.0).abs() < 1e-12);
+        assert_eq!(d.items[0].points[0].t, 2000.0);
+        assert!((d.items[0].points[1].t - 2000.4166666).abs() < 1e-6);
+    }
+
+    #[test]
+    fn duplicate_same_time_different_spelling() {
+        let dir = temp_week(&format!("{HEADER}A,X,,2000,1,,false\nA,X,,2000-01,2,,false\n"));
+        let (_, errs, _) = parse(&dir).unwrap();
+        assert!(errs.iter().any(|e| e.contains("duplicate")), "{errs:?}");
     }
 }

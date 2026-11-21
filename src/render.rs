@@ -40,7 +40,7 @@ pub fn thumb(week_dir: &Path, year: Option<f64>) -> Result<PathBuf> {
     let ds = Dataset::load(week_dir)?;
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
     let layout = Layout::landscape(1.0, cfg.top_n);
-    let year = year.unwrap_or(ds.last_year as f64);
+    let year = year.unwrap_or(ds.last);
     let mut tracker = RankTracker::new(ds.items.len(), layout.top_n);
     let mut fs = tracker.step(&ds, year, 1.0 / 60.0);
     for _ in 0..120 {
@@ -93,9 +93,9 @@ pub fn render(week_dir: &Path, fmt: Format, preview: bool) -> Result<PathBuf> {
     for f in 0..total {
         let phase = tl.phase_at(f);
         let year = match phase {
-            Phase::Intro { .. } => tl.start_year as f64,
-            Phase::Race { year } => year,
-            Phase::Hold | Phase::End { .. } => tl.end_year as f64,
+            Phase::Intro { .. } => tl.start,
+            Phase::Race { t } => t,
+            Phase::Hold | Phase::End { .. } => tl.end,
         };
         let fs = tracker.step(&ds, year, dt);
         painter.paint(&mut pm, &phase, &fs);

@@ -67,7 +67,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Cmd::Validate { dir } => {
             let r = validate::run(&dir)?;
             println!("items: {}", r.items);
-            println!("years: {}–{}", r.first_year, r.last_year);
+            println!("time: {}–{}", fmt::format_time(r.first, r.granularity), fmt::format_time(r.last, r.granularity));
             println!("estimated: {:.1}%", r.estimated_share * 100.0);
             println!("reviewed: {}", if r.reviewed { "yes" } else { "no" });
             for w in &r.warnings {
