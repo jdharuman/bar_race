@@ -1,7 +1,7 @@
 //! Pillar walk scene: sky, clouds, skyline, glossy floor, 3D pillars with reflections.
 
 use crate::camera::{focus_x, Camera, PHOTO_H, PILLAR_D, PILLAR_W, SPACING};
-use crate::fmt::format_value;
+use crate::fmt::format_tick;
 use crate::text::{Align, Text};
 use std::path::Path;
 use crate::config::{PillarColors, VideoConfig};
@@ -27,6 +27,8 @@ pub struct WalkPainter {
     rows: Vec<Pillar>,
     colors: Vec<Color>,
     photos: Vec<Option<Pixmap>>,
+    /// Sky + floor gradients: fixed (the horizon never moves), drawn once.
+    backdrop: Pixmap,
     cfg: VideoConfig,
     text: Text,
     width: u32,
@@ -123,10 +125,15 @@ impl WalkPainter {
                 }
             })
             .collect();
+        let horizon = Camera::for_frame(width, height, portrait).horizon;
+        let mut backdrop = Pixmap::new(width, height).ok_or_else(|| anyhow::anyhow!("bad frame size"))?;
+        vgradient(&mut backdrop, 0.0, horizon, hex(SKY_TOP), hex(SKY_HORIZON));
+        vgradient(&mut backdrop, horizon, height as f32, hex(FLOOR_HORIZON), hex(FLOOR));
         Ok(WalkPainter {
             rows: rows.to_vec(),
             colors,
             photos,
+            backdrop,
             cfg: cfg.clone(),
             text: Text::new(),
             width,
@@ -136,6 +143,7 @@ impl WalkPainter {
         })
     }
 
+    #[cfg(test)]
     pub fn pillar_color(&self, i: usize) -> Color {
         self.colors[i]
     }
@@ -165,8 +173,7 @@ impl WalkPainter {
         let cam = self.camera(p);
         let (w, h) = (self.width as f32, self.height as f32);
         // sky and floor
-        vgradient(pm, 0.0, cam.horizon, hex(SKY_TOP), hex(SKY_HORIZON));
-        vgradient(pm, cam.horizon, h, hex(FLOOR_HORIZON), hex(FLOOR));
+        pm.data_mut().copy_from_slice(self.backdrop.data());
         let px_per_unit = cam.focal / cam.dist;
         self.paint_clouds(pm, cam.x * px_per_unit * 0.05, cam.horizon);
         self.paint_skyline(pm, cam.x * px_per_unit * 0.25, cam.horizon);
@@ -243,7 +250,8 @@ impl WalkPainter {
         }
         let (line, s) = self.fit_line(&row.name, fw * 0.1, true, inner * 0.92);
         self.txt(pm, &line, cx, py + ph * 0.3, s, true, Color::WHITE, Align::Center);
-        let mut value = format_value(row.value, &self.cfg.unit_prefix, &self.cfg.unit_suffix, self.cfg.number_style);
+        // static values: whole numbers need no decimal
+        let mut value = format_tick(row.value, &self.cfg.unit_prefix, &self.cfg.unit_suffix, self.cfg.number_style);
         if row.estimated {
             value.push('*');
         }
@@ -559,5 +567,46 @@ mod tests {
         let (x, y, fw, _) = w.pillar_rect(0, 0.0, s).unwrap();
         let px = pm.pixel((x + fw / 2.0) as u32, (y - 0.3 * fw) as u32).unwrap();
         assert!(px.red() > 230 && px.green() < 30, "{px:?}");
+    }
+
+    #[test]
+    fn whole_plate_values_have_no_decimal() {
+        let mut r = fulks(None);
+        r[0].value = 167.0;
+        let cfg = VideoConfig { unit_suffix: " m".into(), ..Default::default() };
+        let (w, _, _) = frame(&r, &cfg, 0.0);
+        assert!(w.last_strings.iter().any(|x| x == "167 m"), "{:?}", w.last_strings);
+    }
+
+    #[test]
+    #[ignore]
+    fn dev_bench() {
+        let vals: Vec<f64> = (0..12).map(|i| 100.0 + 60.0 * i as f64).collect();
+        let r = rows(&vals);
+        let mut wp = WalkPainter::new(&r, &VideoConfig::default(), 1920, 1080, false).unwrap();
+        let mut pm = Pixmap::new(1920, 1080).unwrap();
+        let t0 = std::time::Instant::now();
+        for f in 0..120 {
+            wp.paint(&mut pm, f as f64 * 0.05, 0.004);
+        }
+        let all = t0.elapsed();
+        let cam = wp.camera(3.0);
+        let t1 = std::time::Instant::now();
+        for _ in 0..120 {
+            vgradient(&mut pm, 0.0, cam.horizon, hex(SKY_TOP), hex(SKY_HORIZON));
+            vgradient(&mut pm, cam.horizon, 1080.0, hex(FLOOR_HORIZON), hex(FLOOR));
+        }
+        let grad = t1.elapsed();
+        let t2 = std::time::Instant::now();
+        for _ in 0..120 {
+            wp.paint_clouds(&mut pm, 10.0, cam.horizon);
+        }
+        let clouds = t2.elapsed();
+        let t3 = std::time::Instant::now();
+        for _ in 0..120 {
+            wp.paint_skyline(&mut pm, 10.0, cam.horizon);
+        }
+        let sky = t3.elapsed();
+        eprintln!("BENCH per frame: all {:?} grad {:?} clouds {:?} skyline {:?}", all / 120, grad / 120, clouds / 120, sky / 120);
     }
 }

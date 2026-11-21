@@ -225,6 +225,7 @@ impl Painter {
         self.events = events;
     }
 
+    #[cfg(test)]
     pub fn paint(&mut self, pm: &mut Pixmap, phase: &Phase, fs: &FrameState) {
         self.paint_with(pm, phase, fs, &Overlay::default());
     }

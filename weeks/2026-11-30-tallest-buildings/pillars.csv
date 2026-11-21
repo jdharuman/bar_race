@@ -1,0 +1,13 @@
+label,name,value,detail,image,source,estimated
+1901,Philadelphia City Hall,167,"Philadelphia, USA",images/us.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+1908,Singer Building,187,"New York, USA",images/us.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+1909,Met Life Tower,213,"New York, USA",images/us.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+1913,Woolworth Building,241,"New York, USA",images/us.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+1930,40 Wall Street,283,"New York, USA",images/us.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+1930,Chrysler Building,319,"New York, USA",images/us.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+1931,Empire State Building,381,"New York, USA",images/us.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+1972,World Trade Center,417,"New York, USA",images/us.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+1974,Sears Tower,442,"Chicago, USA",images/us.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+1998,Petronas Towers,452,"Kuala Lumpur, Malaysia",images/my.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+2004,Taipei 101,508,"Taipei, Taiwan",images/tw.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
+2010,Burj Khalifa,828,"Dubai, UAE",images/ae.png,https://en.wikipedia.org/wiki/History_of_the_world%27s_tallest_buildings,false
