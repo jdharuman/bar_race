@@ -1,0 +1,30 @@
+{
+  "id": "barraceErrNotify",
+  "name": "barrace error alert",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "7c1e3b90-2d54-4b6a-8e1f-0a9d2c4e5f01",
+      "name": "When the daily workflow fails",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "command": "=curl -sS --fail --max-time 30 -o /dev/null \"https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage\" --data-urlencode \"chat_id=${TELEGRAM_CHAT_ID}\" --data-urlencode \"text=❌ barrace: n8n run of '{{ String($json.workflow?.name ?? 'unknown').replace(/[^A-Za-z0-9 ._:-]/g, ' ') }}' failed (execution {{ String($json.execution?.id ?? 'none').replace(/[^A-Za-z0-9]/g, '') }}): {{ String($json.execution?.error?.message ?? $json.trigger?.error?.message ?? 'no message').replace(/[^A-Za-z0-9 .,:_\\/()-]/g, ' ').slice(0, 300) }}. If a pipeline report came just before this, it is the same failure. Details: n8n, Executions.\""
+      },
+      "id": "7c1e3b90-2d54-4b6a-8e1f-0a9d2c4e5f02",
+      "name": "Send Telegram alert",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [320, 0]
+    }
+  ],
+  "connections": {
+    "When the daily workflow fails": { "main": [ [ { "node": "Send Telegram alert", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "pinData": {}
+}

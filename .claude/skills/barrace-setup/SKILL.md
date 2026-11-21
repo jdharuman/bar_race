@@ -147,12 +147,21 @@ Tested with n8n 2.48. Run with the env file loaded: without
 ```bash
 systemctl --user stop n8n
 set -a; . ~/.config/barrace/env; set +a
+n8n import:workflow --input=$REPO/n8n/error-alert.json   # fixed id barraceErrNotify
 n8n import:workflow --input=$REPO/n8n/daily-video.json
 ID=$(n8n list:workflow | grep "barrace daily video" | cut -d"|" -f1)
 n8n publish:workflow --id=$ID          # older 1.x: n8n update:workflow --id=$ID --active=true
-n8n list:workflow --active=true        # must list "barrace daily video"
+n8n publish:workflow --id=barraceErrNotify
+n8n list:workflow --active=true        # must list both workflows
 systemctl --user start n8n
 ```
+
+"barrace error alert" sends a Telegram message (plain `curl`, so it works even
+when uv or Python is broken) whenever "barrace daily video" fails inside n8n.
+It must be published too: n8n 2.x skips an error workflow that isn't active.
+Re-importing an existing workflow unpublishes it; publish it again. To update
+an existing daily workflow in place, import a copy with `"id"` set to its
+current id, or n8n creates a duplicate.
 
 For the UI (run history, "Execute workflow" button), the user opens a tunnel
 (`ssh -L 5678:localhost:5678 …`), goes to http://localhost:5678, and creates the

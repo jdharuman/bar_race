@@ -81,6 +81,8 @@ A step that fails writes `videos/<dir>/error.txt`. Claude's full output is in
 | `quotaExceeded` | YouTube API allows ~3 runs a day (10,000 units; one run ≈ 3,250). Wait until midnight Pacific |
 | `barrace validate failed` | look at `research.log`; re-run with a clearer comment |
 | no Telegram message | check `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` in `~/.config/barrace/env` |
+| Telegram "❌ barrace: n8n run … failed" | n8n itself saw the run fail (from the "barrace error alert" workflow). If a pipeline report came just before, it is the same failure; otherwise the script could not start: open n8n → Executions for the output |
+| no message at all by ~03:30 | the machine was off/asleep or n8n was down: `systemctl --user status n8n` |
 | a run seems stuck / "locked" | a run holds `videos/.lock` (stale after 6 h). Delete it only if no run is active |
 
 ## Limits to know
