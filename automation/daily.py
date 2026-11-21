@@ -6,6 +6,8 @@ Each step prints one JSON line. On failure a step writes <dir>/error.txt and exi
 import argparse
 import csv
 import json
+import os
+import subprocess
 import re
 import shutil
 import sys
@@ -147,6 +149,79 @@ def pick(root: Path, today: date) -> dict:
             "youtube_url": row["youtube_url"], "redo_of": topic["redo_of"]}
 
 
+RESEARCH_TIMEOUT_S = 45 * 60
+LIMIT_RETRY_S = 30 * 60
+
+
+def barrace_bin(root: Path) -> str:
+    return os.environ.get("BARRACE", str(root / "target" / "release" / "barrace"))
+
+
+def claude_cmd(d: Path, root: Path) -> list[str]:
+    bb = barrace_bin(root)
+    prompt = (
+        f"Read .claude/skills/barrace-research/SKILL.md and follow it exactly to research "
+        f"the topic in {d}/topic.json and write every output file into {d}. "
+        f"The barrace binary is {bb}. Finish only when `{bb} validate {d}` reports no errors."
+    )
+    tools = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch",
+             "Bash(curl:*)", "Bash(uv run:*)", "Bash(yt-dlp:*)", f"Bash({bb} validate:*)",
+             "Bash(ls:*)", "Bash(mkdir:*)", "Bash(unzip:*)", "Bash(file:*)", "Bash(head:*)",
+             "Bash(wc:*)"]
+    return [os.environ.get("CLAUDE_BIN", "claude"), "-p", prompt, "--model", "opus",
+            "--permission-mode", "acceptEdits", "--allowedTools", *tools,
+            "--output-format", "json"]
+
+
+def _tail(text: str, n: int = 30) -> str:
+    return "\n".join((text or "").strip().splitlines()[-n:])
+
+
+def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
+    cmd = claude_cmd(d, root)
+    for attempt in (1, 2):
+        r = run(cmd, cwd=root, capture_output=True, text=True, timeout=RESEARCH_TIMEOUT_S)
+        out = f"{r.stdout or ''}\n{r.stderr or ''}"
+        (d / "research.log").write_text(out)
+        limited = "usage limit" in out.lower() or "limit reached" in out.lower()
+        if limited and attempt == 1:
+            sleep(LIMIT_RETRY_S)
+            continue
+        if r.returncode != 0:
+            raise StepError(f"claude exited {r.returncode}\n{_tail(out)}")
+        break
+    if not (d / "metadata.json").exists():
+        raise StepError("claude finished but wrote no metadata.json")
+    if not ((d / "data.csv").exists() or (d / "pillars.csv").exists()):
+        raise StepError("claude finished but wrote no data.csv or pillars.csv")
+    v = run([barrace_bin(root), "validate", str(d)], capture_output=True, text=True)
+    if v.returncode != 0:
+        raise StepError(f"barrace validate failed\n{_tail(v.stdout + (v.stderr or ''))}")
+
+
+def render(root: Path, d: Path, run=subprocess.run) -> None:
+    bb = barrace_bin(root)
+    for cmd in ([bb, "render", str(d), "--format", "both"], [bb, "thumb", str(d)]):
+        r = run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise StepError(f"{' '.join(cmd[1:2])} exited {r.returncode}\n"
+                            f"{_tail((r.stdout or '') + (r.stderr or ''))}")
+
+
+def run_step(name: str, d: Path, fn) -> int:
+    """Run a step; on failure write <d>/error.txt and return 1."""
+    try:
+        fn()
+    except (StepError, subprocess.TimeoutExpired, OSError) as e:
+        if isinstance(e, subprocess.TimeoutExpired):
+            e = f"timed out after {e.timeout:.0f} s"
+        (d / "error.txt").write_text(f"{name}: {e}\n")
+        _print({"ok": False, "error": f"{name}: {str(e).splitlines()[0]}"})
+        return 1
+    _print({"ok": True})
+    return 0
+
+
 def studio(vid: str) -> str:
     return f"https://studio.youtube.com/video/{vid}/edit"
 
@@ -184,6 +259,8 @@ def main(argv=None) -> int:
     ap.add_argument("--root", type=Path, default=ROOT)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("pick")
+    for step in ("research", "render"):
+        sub.add_parser(step).add_argument("dir", type=Path)
     f = sub.add_parser("finish")
     f.add_argument("dir", type=Path)
     f.add_argument("--status", choices=["uploaded", "failed"], required=True)
@@ -204,6 +281,12 @@ def main(argv=None) -> int:
             release_lock(root)
             _print({"invalid": str(e), "message": f"barrace: skipped a bad topics.csv row: {e}"})
             return 2
+    if a.cmd == "research":
+        d = a.dir.resolve()
+        return run_step("research", d, lambda: research(root, d))
+    if a.cmd == "render":
+        d = a.dir.resolve()
+        return run_step("render", d, lambda: render(root, d))
     if a.cmd == "finish":
         _print(finish(root, a.dir.resolve(), a.status))
         return 0

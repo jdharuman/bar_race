@@ -158,3 +158,72 @@ def test_finish_releases_lock(tmp_path):
     assert r.returncode == 0, r.stderr
     assert not (tmp_path / "videos" / ".lock").exists()
     assert json.loads(r.stdout)["status"] == "uploaded"
+
+
+class FakeRun:
+    """Stands in for subprocess.run; returns queued (returncode, stdout) per call."""
+    def __init__(self, results, on_call=None):
+        self.results, self.calls, self.on_call = list(results), [], on_call
+
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        if self.on_call:
+            self.on_call(cmd)
+        code, out = self.results.pop(0)
+        return subprocess.CompletedProcess(cmd, code, out, "")
+
+
+def test_claude_cmd_uses_opus_and_skill(tmp_path):
+    cmd = daily.claude_cmd(tmp_path / "videos" / "x", tmp_path)
+    assert cmd[:2] == ["claude", "-p"]
+    assert cmd[cmd.index("--model") + 1] == "opus"
+    assert "barrace-research/SKILL.md" in cmd[2]
+    assert str(tmp_path / "videos" / "x") in cmd[2]
+
+
+def test_research_retries_on_usage_limit(tmp_path):
+    d = tmp_path / "v"
+    d.mkdir()
+
+    def make_files(cmd):
+        if cmd[0] == "claude":
+            (d / "metadata.json").write_text("{}")
+            (d / "data.csv").write_text("x")
+    run = FakeRun([(1, "Claude usage limit reached"), (0, "{}"), (0, "ok")], make_files)
+    slept = []
+    daily.research(tmp_path, d, run=run, sleep=slept.append)
+    assert slept == [1800]
+    assert [c[0] for c in run.calls].count("claude") == 2
+
+
+def test_research_fails_without_metadata(tmp_path):
+    d = tmp_path / "v"
+    d.mkdir()
+    run = FakeRun([(0, "{}")])
+    try:
+        daily.research(tmp_path, d, run=run, sleep=lambda s: None)
+        assert False, "expected StepError"
+    except daily.StepError as e:
+        assert "metadata.json" in str(e)
+
+
+def test_research_fails_on_validate_error(tmp_path):
+    d = tmp_path / "v"
+    d.mkdir()
+    (d / "metadata.json").write_text("{}")
+    (d / "pillars.csv").write_text("x")
+    run = FakeRun([(0, "{}"), (1, "error: row 3 bad value")])
+    try:
+        daily.research(tmp_path, d, run=run, sleep=lambda s: None)
+        assert False, "expected StepError"
+    except daily.StepError as e:
+        assert "row 3" in str(e)
+
+
+def test_cli_writes_error_txt(tmp_path):
+    d = tmp_path / "v"
+    d.mkdir()
+    r = subprocess.run([sys.executable, DAILY, "--root", str(tmp_path), "render", str(d)],
+                       capture_output=True, text=True, env={**os.environ, "BARRACE": "/bin/false"})
+    assert r.returncode == 1
+    assert (d / "error.txt").read_text().startswith("render:")
