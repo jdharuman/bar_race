@@ -26,6 +26,7 @@ pub struct VideoConfig {
     pub short_seconds: f64,
     pub music: Option<PathBuf>,
     pub number_style: crate::fmt::NumberStyle,
+    pub bar_colors: BarColors,
     pub reviewed: bool,
     pub colors: BTreeMap<String, String>,
 }
@@ -44,6 +45,7 @@ impl Default for VideoConfig {
             short_seconds: 58.0,
             music: None,
             number_style: Default::default(),
+            bar_colors: Default::default(),
             reviewed: false,
             colors: BTreeMap::new(),
         }
@@ -94,6 +96,17 @@ impl VideoConfig {
         }
         Ok(cfg)
     }
+}
+
+/// Where bar colours come from.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BarColors {
+    /// Dominant colour of the item's image, else the category palette.
+    #[default]
+    Image,
+    /// Category palette only.
+    Category,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]

@@ -58,7 +58,23 @@ impl Painter {
                 cat_colors.insert(&it.category, c);
             }
         }
-        let item_colors = ds.items.iter().map(|it| cat_colors[it.category.as_str()]).collect();
+        let item_colors = ds
+            .items
+            .iter()
+            .map(|it| {
+                let from_image = || {
+                    let im = image::open(it.image.as_ref()?).ok()?.to_rgba8();
+                    let [r, g, b] = dominant_color(&im)?;
+                    Some(Color::from_rgba8(r, g, b, 255))
+                };
+                let overridden = cfg.colors.contains_key(&it.category);
+                match cfg.bar_colors {
+                    crate::config::BarColors::Image if !overridden => from_image(),
+                    _ => None,
+                }
+                .unwrap_or(cat_colors[it.category.as_str()])
+            })
+            .collect();
         let d = layout.bar_height().round().max(1.0) as u32;
         let images = ds
             .items
@@ -334,6 +350,28 @@ pub fn nice_ticks(max: f64) -> Vec<f64> {
     (0..).map(|i| i as f64 * step).take_while(|v| *v <= max).collect()
 }
 
+/// Most common colour of an image (4-bit buckets, averaged), ignoring transparent,
+/// near-white and near-black pixels. None if nothing qualifies.
+pub fn dominant_color(img: &image::RgbaImage) -> Option<[u8; 3]> {
+    let mut buckets: std::collections::HashMap<u16, (u32, [u64; 3])> = std::collections::HashMap::new();
+    for p in img.pixels() {
+        let [r, g, b, a] = p.0;
+        if a < 128 || (r > 225 && g > 225 && b > 225) || (r < 30 && g < 30 && b < 30) {
+            continue;
+        }
+        let key = ((r as u16 >> 4) << 8) | ((g as u16 >> 4) << 4) | (b as u16 >> 4);
+        let e = buckets.entry(key).or_insert((0, [0; 3]));
+        e.0 += 1;
+        e.1[0] += r as u64;
+        e.1[1] += g as u64;
+        e.1[2] += b as u64;
+    }
+    // ties broken by bucket key so the choice is the same every run
+    let (_, (n, sum)) = buckets.into_iter().max_by_key(|(k, (n, _))| (*n, *k))?;
+    let n = n as u64;
+    Some([(sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8])
+}
+
 /// Load an image, crop to a centred square, scale to d×d and cut to a circle (premultiplied).
 fn load_circle_image(path: &Path, d: u32) -> Result<Pixmap> {
     let img = image::open(path)?.resize_to_fill(d, d, image::imageops::FilterType::Lanczos3).to_rgba8();
@@ -589,5 +627,61 @@ mod tests {
         let (_, pm) = paint_fixture(ch);
         let px = pm.pixel(2, 2).unwrap();
         assert_eq!((px.red(), px.green(), px.blue()), (0x11, 0x22, 0x33));
+    }
+
+    fn img(pixels: &[[u8; 4]]) -> image::RgbaImage {
+        let mut im = image::RgbaImage::new(pixels.len() as u32, 1);
+        for (i, p) in pixels.iter().enumerate() {
+            im.put_pixel(i as u32, 0, image::Rgba(*p));
+        }
+        im
+    }
+
+    #[test]
+    fn dominant_ignores_white() {
+        let mut px = vec![[255, 255, 255, 255]; 6];
+        px.extend(vec![[255, 0, 0, 255]; 4]);
+        assert_eq!(dominant_color(&img(&px)), Some([255, 0, 0]));
+    }
+
+    #[test]
+    fn all_white_none() {
+        assert_eq!(dominant_color(&img(&[[255, 255, 255, 255]; 10])), None);
+        assert_eq!(dominant_color(&img(&[[0, 0, 0, 255]; 10])), None);
+    }
+
+    #[test]
+    fn transparent_ignored() {
+        let mut px = vec![[0, 0, 255, 0]; 8];
+        px.extend(vec![[0, 200, 0, 255]; 2]);
+        assert_eq!(dominant_color(&img(&px)), Some([0, 200, 0]));
+    }
+
+    fn one_item_png(color: [u8; 4], bar_colors: crate::config::BarColors) -> (Painter, Pixmap, f32) {
+        let dir = crate::testutil::temp_week("name\n");
+        let png = dir.join("c.png");
+        image::RgbaImage::from_pixel(32, 32, image::Rgba(color)).save(&png).unwrap();
+        let ds = one_item(Some(png));
+        let fs = settle(&ds, 10, 2000.5);
+        let cfg = VideoConfig { bar_colors, ..Default::default() };
+        let mut p = Painter::new(&ds, &cfg, &ChannelConfig::default(), Layout::landscape(0.5, 10)).unwrap();
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint(&mut pm, &Phase::Race { t: 2000.5 }, &fs);
+        let y = p.layout().slot_center_y(0.0);
+        (p, pm, y)
+    }
+
+    #[test]
+    fn bar_uses_image_colour() {
+        let (_, pm, y) = one_item_png([0, 160, 60, 255], crate::config::BarColors::Image);
+        assert!(count_color_in_row(&pm, y as u32, [0, 160, 60]) > 100);
+    }
+
+    #[test]
+    fn bar_falls_back_to_category() {
+        let (_, pm, y) = one_item_png([255, 255, 255, 255], crate::config::BarColors::Image);
+        assert!(count_color_in_row(&pm, y as u32, [0x38, 0xbd, 0xf8]) > 100, "white image → palette[0]");
+        let (_, pm, y) = one_item_png([0, 160, 60, 255], crate::config::BarColors::Category);
+        assert!(count_color_in_row(&pm, y as u32, [0x38, 0xbd, 0xf8]) > 100, "category mode ignores image");
     }
 }
