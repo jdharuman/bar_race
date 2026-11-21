@@ -1,0 +1,3 @@
+/target
+weeks/*/out/
+tests/fixtures/week/out/

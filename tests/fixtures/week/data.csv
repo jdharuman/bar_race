@@ -1,0 +1,14 @@
+name,category,image,year,value,source,estimated
+Alpha,X,,2000,10,https://example.org/a,false
+Alpha,X,,2001,20,https://example.org/a,false
+Alpha,X,,2002,30,https://example.org/a,false
+Alpha,X,,2003,40,https://example.org/a,false
+Beta,Y,,2000,25,https://example.org/b,false
+Beta,Y,,2001,22,,true
+Beta,Y,,2002,26,https://example.org/b,false
+Beta,Y,,2003,28,https://example.org/b,false
+Gamma,X,,2000,5,https://example.org/g,false
+Gamma,X,,2001,15,https://example.org/g,false
+Gamma,X,,2002,12,https://example.org/g,false
+Gamma,X,,2003,35,https://example.org/g,false
+Delta,Y,,2002,8,https://example.org/d,false
