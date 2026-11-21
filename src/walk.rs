@@ -1,6 +1,9 @@
 //! Pillar walk scene: sky, clouds, skyline, glossy floor, 3D pillars with reflections.
 
-use crate::camera::{focus_x, Camera, PILLAR_D, PILLAR_W, SPACING};
+use crate::camera::{focus_x, Camera, PHOTO_H, PILLAR_D, PILLAR_W, SPACING};
+use crate::fmt::format_value;
+use crate::text::{Align, Text};
+use std::path::Path;
 use crate::config::{PillarColors, VideoConfig};
 use crate::draw::{dominant_color, hex};
 use crate::pillars::Pillar;
@@ -12,12 +15,20 @@ pub const SKY_HORIZON: &str = "#cfe3f7";
 pub const SKYLINE: &str = "#3b4a63";
 pub const FLOOR_HORIZON: &str = "#2b3a50";
 pub const FLOOR: &str = "#1e2a3a";
-/// Smallest drawn pillar height (world units) — Task 5 replaces with the plate rule.
-pub const MIN_H: f32 = 0.35;
+pub const PLATE: &str = "#111827";
+pub const GOLD: &str = "#facc15";
+/// Plate (text block on the front face) height as a fraction of pillar width.
+pub const PLATE_H: f32 = 0.55;
+/// Smallest drawn pillar height (world units): the plate plus a margin.
+pub const MIN_H: f32 = PLATE_H * PILLAR_W * 1.15;
+const PHOTO_PX: (u32, u32) = (400, 500);
 
 pub struct WalkPainter {
     rows: Vec<Pillar>,
     colors: Vec<Color>,
+    photos: Vec<Option<Pixmap>>,
+    cfg: VideoConfig,
+    text: Text,
     width: u32,
     height: u32,
     portrait: bool,
@@ -61,6 +72,18 @@ fn vgradient(pm: &mut Pixmap, y0: f32, y1: f32, top: Color, bottom: Color) {
     pm.fill_rect(rect, &paint, Transform::identity(), None);
 }
 
+/// Photo cropped to 4:5 and scaled to PHOTO_PX, premultiplied.
+fn load_photo(path: &Path) -> Result<Pixmap> {
+    let img = image::open(path)?.resize_to_fill(PHOTO_PX.0, PHOTO_PX.1, image::imageops::FilterType::Lanczos3).to_rgba8();
+    let mut pm = Pixmap::new(PHOTO_PX.0, PHOTO_PX.1).unwrap();
+    for (dst, src) in pm.pixels_mut().iter_mut().zip(img.pixels()) {
+        let [r, g, b, a] = src.0;
+        let pre = |c: u8| ((c as u16 * a as u16 + 127) / 255) as u8;
+        *dst = tiny_skia::PremultipliedColorU8::from_rgba(pre(r), pre(g), pre(b), a).unwrap();
+    }
+    Ok(pm)
+}
+
 /// Tiny deterministic generator for clouds and skyline (same scene every render).
 struct Lcg(u64);
 impl Lcg {
@@ -87,7 +110,30 @@ impl WalkPainter {
                 }
             })
             .collect();
-        Ok(WalkPainter { rows: rows.to_vec(), colors, width, height, portrait, last_strings: Vec::new() })
+        let photos = rows
+            .iter()
+            .map(|r| {
+                let path = r.image.as_ref()?;
+                match load_photo(path) {
+                    Ok(pm) => Some(pm),
+                    Err(e) => {
+                        eprintln!("warning: image {}: {e:#}; using initials", path.display());
+                        None
+                    }
+                }
+            })
+            .collect();
+        Ok(WalkPainter {
+            rows: rows.to_vec(),
+            colors,
+            photos,
+            cfg: cfg.clone(),
+            text: Text::new(),
+            width,
+            height,
+            portrait,
+            last_strings: Vec::new(),
+        })
     }
 
     pub fn pillar_color(&self, i: usize) -> Color {
@@ -140,6 +186,92 @@ impl WalkPainter {
         }
         for &i in &vis {
             self.paint_pillar(pm, &cam, i, scale);
+            self.paint_plate_and_photo(pm, i, p, scale);
+        }
+        let title = self.cfg.title.clone();
+        if !title.is_empty() {
+            let size = 0.035 * h;
+            let size = self.fit(&title, size, true, w * 0.9);
+            self.txt(pm, &title, 0.04 * w, 0.06 * h, size, true, Color::WHITE, Align::Left);
+        }
+    }
+
+    fn txt(&mut self, pm: &mut Pixmap, s: &str, x: f32, y: f32, size: f32, bold: bool, color: Color, align: Align) {
+        if s.is_empty() {
+            return;
+        }
+        self.text.draw(pm, s, x, y, size, bold, color, align);
+        self.last_strings.push(s.to_string());
+    }
+
+    /// Largest size ≤ `size` fitting `max_w` (never below 4 px).
+    fn fit(&mut self, s: &str, size: f32, bold: bool, max_w: f32) -> f32 {
+        let w = self.text.measure(s, size, bold);
+        if w <= max_w { size } else { (size * max_w / w).floor().max(4.0) }
+    }
+
+    /// Shrink to fit, but not below 55% of `size`; past that, cut the text with "…".
+    fn fit_line(&mut self, s: &str, size: f32, bold: bool, max_w: f32) -> (String, f32) {
+        let min = (size * 0.55).max(4.0);
+        let fitted = self.fit(s, size, bold, max_w);
+        if fitted >= min {
+            return (s.to_string(), fitted);
+        }
+        let chars: Vec<char> = s.chars().collect();
+        let mut n = chars.len();
+        while n > 1 {
+            n = n * 9 / 10;
+            let cut: String = chars[..n].iter().collect::<String>().trim_end().to_string() + "…";
+            if self.text.measure(&cut, min, bold) <= max_w {
+                return (cut, min);
+            }
+        }
+        ("…".into(), min)
+    }
+
+    fn paint_plate_and_photo(&mut self, pm: &mut Pixmap, i: usize, p: f64, scale: f32) {
+        let Some((x, y, fw, _)) = self.pillar_rect(i, p, scale) else { return };
+        let row = self.rows[i].clone();
+        let inner = fw * 0.84;
+        let cx = x + fw / 2.0;
+        // dark panel: name + value
+        let (py, ph) = (y + fw * 0.05, fw * 0.27);
+        if let Some(r) = Rect::from_xywh(x + fw * 0.08, py, inner, ph) {
+            let mut paint = Paint::default();
+            paint.set_color(hex(PLATE));
+            pm.fill_rect(r, &paint, Transform::identity(), None);
+        }
+        let (line, s) = self.fit_line(&row.name, fw * 0.1, true, inner * 0.92);
+        self.txt(pm, &line, cx, py + ph * 0.3, s, true, Color::WHITE, Align::Center);
+        let mut value = format_value(row.value, &self.cfg.unit_prefix, &self.cfg.unit_suffix, self.cfg.number_style);
+        if row.estimated {
+            value.push('*');
+        }
+        let (line, s) = self.fit_line(&value, fw * 0.1, true, inner * 0.92);
+        self.txt(pm, &line, cx, py + ph * 0.72, s, true, hex(GOLD), Align::Center);
+        let (line, s) = self.fit_line(&row.detail, fw * 0.065, false, inner);
+        self.txt(pm, &line, cx, y + fw * 0.39, s, false, Color::from_rgba(1.0, 1.0, 1.0, 0.85).unwrap(), Align::Center);
+        let (line, s) = self.fit_line(&row.label, fw * 0.11, true, inner);
+        self.txt(pm, &line, cx, y + fw * 0.49, s, true, hex(PLATE), Align::Center);
+        // photo billboard standing on the pillar top
+        let ph = fw * PHOTO_H / PILLAR_W;
+        match &self.photos[i] {
+            Some(img) => {
+                let sx = fw / img.width() as f32;
+                let sy = ph / img.height() as f32;
+                let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+                pm.draw_pixmap(0, 0, img.as_ref(), &paint, Transform::from_row(sx, 0.0, 0.0, sy, x, y - ph), None);
+            }
+            None => {
+                let tile = Rect::from_xywh(x + fw * 0.1, y - ph * 0.85, fw * 0.8, ph * 0.8);
+                if let Some(r) = tile {
+                    let mut paint = Paint::default();
+                    paint.set_color(shade(self.colors[i], 0.6));
+                    pm.fill_rect(r, &paint, Transform::identity(), None);
+                }
+                let ini: String = row.name.split_whitespace().filter_map(|w| w.chars().next()).take(2).flat_map(char::to_uppercase).collect();
+                self.txt(pm, &ini, cx, y - ph * 0.45, fw * 0.3, true, Color::WHITE, Align::Center);
+            }
         }
     }
 
@@ -352,5 +484,80 @@ mod tests {
             wp.paint(&mut pm, 5.0, s);
             pm.save_png(std::env::temp_dir().join(format!("walk_{name}.png"))).unwrap();
         }
+    }
+
+    fn fulks(image: Option<std::path::PathBuf>) -> Vec<Pillar> {
+        vec![Pillar {
+            label: "1946-47".into(),
+            name: "Joe Fulks".into(),
+            value: 8000.0,
+            detail: "Philadelphia Warriors".into(),
+            image,
+            source: String::new(),
+            estimated: false,
+        }]
+    }
+
+    #[test]
+    fn plate_strings_for_visible_pillars() {
+        let (w, _, _) = frame(&fulks(None), &VideoConfig::default(), 0.0);
+        for s in ["Joe Fulks", "8,000", "Philadelphia Warriors", "1946-47"] {
+            assert!(w.last_strings.iter().any(|x| x == s), "{s}: {:?}", w.last_strings);
+        }
+    }
+
+    #[test]
+    fn tiny_pillar_keeps_plate_height() {
+        let r = rows(&[8000.0, 40_000_000.0]);
+        let mut wp = WalkPainter::new(&r, &VideoConfig::default(), 960, 540, false).unwrap();
+        let mut f = crate::camera::HeightFollow::new();
+        let mut s = 0.0;
+        for _ in 0..200 {
+            s = f.step(&[8000.0, 40_000_000.0], 1.0, 1.0 / 60.0);
+        }
+        let mut pm = Pixmap::new(960, 540).unwrap();
+        wp.paint(&mut pm, 1.0, s);
+        let (_, _, fw, fh) = wp.pillar_rect(0, 1.0, s).unwrap();
+        assert!(fh >= PLATE_H * fw, "h {fh} < plate {}", PLATE_H * fw);
+    }
+
+    #[test]
+    fn long_name_fits_face() {
+        let short = fulks(None);
+        let mut long = fulks(None);
+        long[0].name = "An Extraordinarily Long Player Name ".repeat(4);
+        let (w, a, s) = frame(&short, &VideoConfig::default(), 0.0);
+        let (_, b, _) = frame(&long, &VideoConfig::default(), 0.0);
+        let (x, y, fw, fh) = w.pillar_rect(0, 0.0, s).unwrap();
+        for yy in 0..540 {
+            for xx in 0..960 {
+                if a.pixel(xx, yy) != b.pixel(xx, yy) {
+                    let (fx, fy) = (xx as f32, yy as f32);
+                    // the initials tile above the face also changes with the name
+                    let top = y - fw * PHOTO_H / PILLAR_W - 2.0;
+                    assert!(fx >= x - 2.0 && fx <= x + fw + 2.0 && fy >= top && fy <= y + fh + 2.0, "pixel {xx},{yy} outside face/photo rect {x},{y},{fw},{fh} top {top}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn missing_image_initials() {
+        let dir = crate::testutil::temp_week("name\n");
+        let bad = dir.join("bad.jpg");
+        std::fs::write(&bad, b"not an image").unwrap();
+        let (w, _, _) = frame(&fulks(Some(bad)), &VideoConfig::default(), 0.0);
+        assert!(w.last_strings.iter().any(|x| x == "JF"), "{:?}", w.last_strings);
+    }
+
+    #[test]
+    fn photo_above_pillar() {
+        let dir = crate::testutil::temp_week("name\n");
+        let png = dir.join("red.png");
+        image::RgbaImage::from_pixel(80, 100, image::Rgba([255, 0, 0, 255])).save(&png).unwrap();
+        let (w, pm, s) = frame(&fulks(Some(png)), &VideoConfig::default(), 0.0);
+        let (x, y, fw, _) = w.pillar_rect(0, 0.0, s).unwrap();
+        let px = pm.pixel((x + fw / 2.0) as u32, (y - 0.3 * fw) as u32).unwrap();
+        assert!(px.red() > 230 && px.green() < 30, "{px:?}");
     }
 }
