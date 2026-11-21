@@ -253,35 +253,110 @@ impl Painter {
     }
 
     fn paint_end(&mut self, pm: &mut Pixmap, t: f64) {
-        let a = (t as f32 / 0.2).min(1.0);
-        self.dim(pm, 0.88 * a);
+        let a = (t as f32 / 0.12).min(1.0);
+        self.dim(pm, 0.92 * a);
         let l = self.layout.clone();
         let fg = with_alpha(self.fg, a);
         let cx = l.width as f32 / 2.0;
-        let line = l.label_size * 1.6;
-        let mut y = l.height as f32 * 0.3;
-        self.txt(pm, "Sources", cx, y, l.title_size, true, fg, Align::Center);
-        y += line * 1.5;
-        let mut domains: Vec<String> = Vec::new();
-        for src in self.ds.items.iter().flat_map(|i| &i.sources) {
-            let d = domain(src);
-            if !d.is_empty() && !domains.contains(&d) {
-                domains.push(d);
+        if !l.portrait {
+            let line = l.label_size * 1.5;
+            let mut y = l.height as f32 * 0.16;
+            self.txt(pm, "Sources", cx, y, l.title_size * 0.9, true, fg, Align::Center);
+            y += line * 1.4;
+            let mut domains: Vec<String> = Vec::new();
+            for src in self.ds.items.iter().flat_map(|i| &i.sources) {
+                let d = domain(src);
+                if !d.is_empty() && !domains.contains(&d) {
+                    domains.push(d);
+                }
+            }
+            for d in domains.iter().take(5) {
+                self.txt(pm, d, cx, y, l.label_size, false, with_alpha(fg, 0.85), Align::Center);
+                y += line;
+            }
+            let share = self.ds.estimated_share();
+            if share > 0.0 {
+                y += line * 0.3;
+                let note = format!("* estimated values: {:.0}%", share * 100.0);
+                self.txt(pm, &note, cx, y, l.label_size, false, with_alpha(fg, 0.7), Align::Center);
+            }
+            let name = self.ch.name.clone();
+            if !name.is_empty() {
+                self.txt(pm, &name, cx, l.height as f32 * 0.9, l.title_size * 0.7, true, fg, Align::Center);
             }
         }
-        for d in domains.iter().take(5) {
-            self.txt(pm, d, cx, y, l.label_size, false, with_alpha(fg, 0.85), Align::Center);
-            y += line;
+        self.paint_buttons(pm, &end_state(t), a);
+    }
+
+    /// Like and Subscribe button rectangles (x, y, w, h) at full size.
+    pub fn button_rects(&self) -> ((f32, f32, f32, f32), (f32, f32, f32, f32)) {
+        let (w, h) = (self.layout.width as f32, self.layout.height as f32);
+        let (bh, like_w, sub_w, gap, cy) = if self.layout.portrait {
+            (0.05 * h, 0.26 * w, 0.42 * w, 0.03 * w, 0.48 * h)
+        } else {
+            (0.09 * h, 0.16 * w, 0.25 * w, 0.02 * w, 0.66 * h)
+        };
+        let bell = bh * 1.1;
+        let total = like_w + gap + sub_w + gap + bell;
+        let x0 = (w - total) / 2.0;
+        ((x0, cy - bh / 2.0, like_w, bh), (x0 + like_w + gap, cy - bh / 2.0, sub_w, bh))
+    }
+
+    fn paint_buttons(&mut self, pm: &mut Pixmap, st: &EndState, a: f32) {
+        let (like, sub) = self.button_rects();
+        let scale = |r: (f32, f32, f32, f32)| {
+            let (cx, cy) = (r.0 + r.2 / 2.0, r.1 + r.3 / 2.0);
+            let (w, h) = (r.2 * st.pop, r.3 * st.pop);
+            (cx - w / 2.0, cy - h / 2.0, w, h)
+        };
+        if st.pop <= 0.01 {
+            return;
         }
-        let share = self.ds.estimated_share();
-        if share > 0.0 {
-            y += line * 0.5;
-            let note = format!("* estimated values: {:.0}%", share * 100.0);
-            self.txt(pm, &note, cx, y, l.label_size, false, with_alpha(fg, 0.7), Align::Center);
-        }
-        let name = self.ch.name.clone();
-        if !name.is_empty() {
-            self.txt(pm, &name, cx, l.height as f32 * 0.82, l.title_size * 0.8, true, fg, Align::Center);
+        let fill = |pm: &mut Pixmap, r: (f32, f32, f32, f32), c: Color| {
+            let mut paint = Paint::default();
+            paint.set_color(with_alpha(c, a));
+            paint.anti_alias = true;
+            if let Some(p) = rounded_rect(r.0, r.1, r.2, r.3, r.3 / 2.0) {
+                pm.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        };
+        // Like
+        let lr = scale(like);
+        let (like_bg, like_fg) = if st.liked { (hex("#2563eb"), Color::WHITE) } else { (hex("#e5e7eb"), hex("#111827")) };
+        fill(pm, lr, like_bg);
+        let size = lr.3 * 0.42;
+        let icon = lr.3 * 0.5;
+        let ix = lr.0 + lr.2 * 0.22;
+        let iy = lr.1 + lr.3 / 2.0;
+        fill_path(pm, &thumb_path(ix, iy, icon), with_alpha(like_fg, a));
+        self.txt(pm, "LIKE", ix + icon * 0.8, iy, size, true, with_alpha(like_fg, a), Align::Left);
+        // Subscribe
+        let sr = scale(sub);
+        let (sub_bg, label) = if st.subscribed { (hex("#9ca3af"), "SUBSCRIBED") } else { (hex("#dc2626"), "SUBSCRIBE") };
+        fill(pm, sr, sub_bg);
+        let size = self.fit_size(label, sr.3 * 0.42, true, sr.2 * 0.84);
+        self.txt(pm, label, sr.0 + sr.2 / 2.0, sr.1 + sr.3 / 2.0, size, true, with_alpha(Color::WHITE, a), Align::Center);
+        // Bell, swinging about its top
+        let bs = sr.3 * 0.9;
+        let (bx, by) = (sr.0 + sr.2 + sr.3 * 0.25 + bs / 2.0, sr.1 + sr.3 * 0.05);
+        let tr = Transform::from_rotate_at(st.bell_angle.to_degrees(), bx, by);
+        let bell_color = if st.subscribed { hex("#f59e0b") } else { self.fg };
+        let mut paint = Paint::default();
+        paint.set_color(with_alpha(bell_color, a));
+        paint.anti_alias = true;
+        pm.fill_path(&bell_path(bx, by, bs), &paint, FillRule::Winding, tr, None);
+        // Cursor
+        if let Some((fx, fy)) = st.cursor {
+            let (l0, s0) = ((like.0 + like.2 / 2.0), (sub.0 + sub.2 / 2.0));
+            let x = l0 + (s0 - l0) * fx;
+            let y = like.1 + like.3 / 2.0 + like.3 * fy;
+            let path = cursor_path(x, y, like.3 * 0.55);
+            fill_path(pm, &path, with_alpha(Color::WHITE, a));
+            let mut paint = Paint::default();
+            paint.set_color(with_alpha(Color::BLACK, a));
+            paint.anti_alias = true;
+            let stroke = tiny_skia::Stroke { width: (like.3 * 0.035).max(1.0), ..Default::default() };
+            pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
         }
     }
 
@@ -468,6 +543,98 @@ fn load_circle_image(path: &Path, d: u32) -> Result<Pixmap> {
     let mut out = Pixmap::new(d, d).unwrap();
     out.draw_pixmap(0, 0, square.as_ref(), &PixmapPaint::default(), Transform::identity(), Some(&mask));
     Ok(out)
+}
+
+/// Animation state of the end card at fraction `t` (0..1) of its duration.
+#[derive(Debug, Clone, Copy)]
+pub struct EndState {
+    pub pop: f32,
+    pub liked: bool,
+    pub subscribed: bool,
+    pub bell_angle: f32,
+    /// Cursor tip: x as a fraction between Like (0) and Subscribe (1) centres,
+    /// y in button heights below the button centre.
+    pub cursor: Option<(f32, f32)>,
+}
+
+pub fn end_state(t: f64) -> EndState {
+    let t = t as f32;
+    let ease_out_back = |x: f32| {
+        let (c1, c3) = (1.70158, 2.70158);
+        1.0 + c3 * (x - 1.0).powi(3) + c1 * (x - 1.0).powi(2)
+    };
+    let smooth = |x: f32| x * x * (3.0 - 2.0 * x);
+    let pop = if t < 0.15 { ease_out_back(t / 0.15) } else { 1.0 };
+    let cursor = if t < 0.15 || t >= 0.65 {
+        None
+    } else if t < 0.35 {
+        let u = smooth((t - 0.15) / 0.2);
+        Some((-0.6 + 0.6 * u, 1.6 - 1.4 * u))
+    } else if t < 0.55 {
+        Some((smooth((t - 0.35) / 0.2), 0.2))
+    } else {
+        Some((1.0, 0.2))
+    };
+    let bell_angle = if (0.6..0.9).contains(&t) {
+        let u = (t - 0.6) / 0.3;
+        0.35 * (std::f32::consts::TAU * 2.0 * u).sin() * (1.0 - u)
+    } else {
+        0.0
+    };
+    EndState { pop, liked: t >= 0.35, subscribed: t >= 0.55, bell_angle, cursor }
+}
+
+fn fill_path(pm: &mut Pixmap, path: &tiny_skia::Path, c: Color) {
+    let mut paint = Paint::default();
+    paint.set_color(c);
+    paint.anti_alias = true;
+    pm.fill_path(path, &paint, FillRule::Winding, Transform::identity(), None);
+}
+
+/// Thumbs-up icon centred at (cx, cy), size s.
+fn thumb_path(cx: f32, cy: f32, s: f32) -> tiny_skia::Path {
+    let mut pb = PathBuilder::new();
+    let (x, y) = (cx - s / 2.0, cy - s / 2.0);
+    // cuff
+    pb.push_rect(Rect::from_xywh(x, y + s * 0.42, s * 0.22, s * 0.58).unwrap());
+    // hand with raised thumb
+    pb.move_to(x + s * 0.3, y + s * 0.42);
+    pb.line_to(x + s * 0.52, y + s * 0.05);
+    pb.quad_to(x + s * 0.68, y, x + s * 0.66, y + s * 0.2);
+    pb.line_to(x + s * 0.6, y + s * 0.38);
+    pb.line_to(x + s * 0.92, y + s * 0.38);
+    pb.quad_to(x + s * 1.02, y + s * 0.42, x + s * 0.96, y + s * 0.55);
+    pb.line_to(x + s * 0.86, y + s * 0.95);
+    pb.quad_to(x + s * 0.82, y + s, x + s * 0.74, y + s);
+    pb.line_to(x + s * 0.3, y + s);
+    pb.close();
+    pb.finish().unwrap()
+}
+
+/// Bell hanging from (cx, top), height s.
+fn bell_path(cx: f32, top: f32, s: f32) -> tiny_skia::Path {
+    let mut pb = PathBuilder::new();
+    let w = s * 0.8;
+    pb.move_to(cx, top);
+    pb.cubic_to(cx + w * 0.42, top, cx + w * 0.38, top + s * 0.55, cx + w / 2.0, top + s * 0.78);
+    pb.line_to(cx - w / 2.0, top + s * 0.78);
+    pb.cubic_to(cx - w * 0.38, top + s * 0.55, cx - w * 0.42, top, cx, top);
+    pb.close();
+    pb.push_circle(cx, top + s * 0.88, s * 0.1);
+    pb.finish().unwrap()
+}
+
+/// Arrow cursor with its tip at (x, y), height s.
+fn cursor_path(x: f32, y: f32, s: f32) -> tiny_skia::Path {
+    let k = s / 20.0;
+    let pts = [(0.0, 0.0), (0.0, 17.0), (4.0, 13.0), (7.0, 20.0), (10.0, 19.0), (7.0, 12.0), (12.0, 12.0)];
+    let mut pb = PathBuilder::new();
+    pb.move_to(x, y);
+    for (px, py) in &pts[1..] {
+        pb.line_to(x + px * k, y + py * k);
+    }
+    pb.close();
+    pb.finish().unwrap()
 }
 
 /// Rectangle with all four corners rounded by r.
@@ -845,5 +1012,77 @@ mod tests {
         let (bx, by, bw, bh) = p.layout().badge_box();
         let px = pm.pixel((bx + bw / 2.0) as u32, (by + bh / 2.0) as u32).unwrap();
         assert!(px.red() > 230 && px.green() < 30, "{px:?}");
+    }
+
+    #[test]
+    fn end_state_sequence() {
+        let s = end_state(0.0);
+        assert!(s.pop < 0.05 && !s.liked && !s.subscribed);
+        let s = end_state(0.2);
+        assert!(s.pop > 0.99 && !s.liked);
+        let s = end_state(0.4);
+        assert!(s.liked && !s.subscribed);
+        let s = end_state(0.6);
+        assert!(s.liked && s.subscribed);
+        assert!(end_state(0.7).bell_angle.abs() > 0.05);
+        assert_eq!(end_state(0.95).bell_angle, 0.0);
+        assert!(end_state(0.9).cursor.is_none());
+        assert!(end_state(0.3).cursor.is_some());
+    }
+
+    fn end_painter(portrait: bool) -> (Painter, FrameState_) {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let fs = settle(&ds, 10, 2003.0);
+        let layout = if portrait { Layout::portrait(0.5, 12) } else { Layout::landscape(0.5, 10) };
+        (Painter::new(&ds, &VideoConfig::default(), &ChannelConfig::default(), layout).unwrap(), fs)
+    }
+    type FrameState_ = crate::scene::FrameState;
+
+    fn paint_end_at(p: &mut Painter, fs: &FrameState_, t: f64) -> Pixmap {
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint(&mut pm, &Phase::End { t }, fs);
+        pm
+    }
+
+    #[test]
+    fn end_card_strings() {
+        let (mut p, fs) = end_painter(false);
+        paint_end_at(&mut p, &fs, 0.3);
+        for s in ["LIKE", "SUBSCRIBE", "Sources"] {
+            assert!(p.last_strings.iter().any(|x| x == s), "{s}: {:?}", p.last_strings);
+        }
+        paint_end_at(&mut p, &fs, 0.7);
+        assert!(p.last_strings.iter().any(|x| x == "SUBSCRIBED"));
+        let (mut p, fs) = end_painter(true);
+        paint_end_at(&mut p, &fs, 0.3);
+        assert!(p.last_strings.iter().any(|x| x == "SUBSCRIBE"));
+        assert!(!p.last_strings.iter().any(|x| x == "Sources"));
+    }
+
+    fn near(px: tiny_skia::PremultipliedColorU8, hexs: &str) -> bool {
+        let c = hex(hexs).to_color_u8();
+        (px.red() as i32 - c.red() as i32).abs() <= 10
+            && (px.green() as i32 - c.green() as i32).abs() <= 10
+            && (px.blue() as i32 - c.blue() as i32).abs() <= 10
+    }
+
+    #[test]
+    fn liked_button_turns_blue() {
+        let (mut p, fs) = end_painter(false);
+        let pm = paint_end_at(&mut p, &fs, 0.5);
+        let ((x, y, w, h), _) = p.button_rects();
+        let px = pm.pixel((x + w * 0.06) as u32, (y + h * 0.5) as u32).unwrap();
+        assert!(near(px, "#2563eb"), "{px:?}");
+    }
+
+    #[test]
+    fn subscribed_button_turns_grey() {
+        let (mut p, fs) = end_painter(false);
+        let (_, (x, y, w, h)) = p.button_rects();
+        let probe = ((x + w * 0.04) as u32, (y + h * 0.5) as u32);
+        let pm = paint_end_at(&mut p, &fs, 0.3);
+        assert!(near(pm.pixel(probe.0, probe.1).unwrap(), "#dc2626"));
+        let pm = paint_end_at(&mut p, &fs, 0.7);
+        assert!(near(pm.pixel(probe.0, probe.1).unwrap(), "#9ca3af"));
     }
 }
