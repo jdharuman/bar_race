@@ -413,3 +413,9 @@ def test_research_fails_if_tool_files_changed(tmp_path):
 
 def test_research_time_limit_20_min():
     assert daily.RESEARCH_TIMEOUT_S == 20 * 60
+
+
+def test_claude_cmd_ignores_user_hooks(tmp_path):
+    # user-level hooks (e.g. command rewriters) break the tool allowlist
+    cmd = daily.claude_cmd(tmp_path / "videos" / "x", tmp_path)
+    assert cmd[cmd.index("--setting-sources") + 1] == "project"
