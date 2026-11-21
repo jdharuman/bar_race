@@ -227,3 +227,14 @@ def test_cli_writes_error_txt(tmp_path):
                        capture_output=True, text=True, env={**os.environ, "BARRACE": "/bin/false"})
     assert r.returncode == 1
     assert (d / "error.txt").read_text().startswith("render:")
+
+
+def test_upload_cli_without_token_writes_reauth(tmp_path):
+    d = tmp_path / "v"
+    d.mkdir()
+    (d / "metadata.json").write_text("{}")
+    r = subprocess.run([sys.executable, DAILY, "--root", str(tmp_path), "upload", str(d)],
+                       capture_output=True, text=True,
+                       env={**os.environ, "BARRACE_CONFIG": str(tmp_path / "cfg")})
+    assert r.returncode == 1, r.stderr
+    assert "daily.py auth" in (d / "error.txt").read_text()

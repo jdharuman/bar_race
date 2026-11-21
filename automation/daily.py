@@ -212,9 +212,11 @@ def run_step(name: str, d: Path, fn) -> int:
     """Run a step; on failure write <d>/error.txt and return 1."""
     try:
         fn()
-    except (StepError, subprocess.TimeoutExpired, OSError) as e:
+    except Exception as e:  # any crash must reach error.txt and the Telegram report
         if isinstance(e, subprocess.TimeoutExpired):
             e = f"timed out after {e.timeout:.0f} s"
+        elif type(e).__name__ != "StepError":
+            e = f"{type(e).__name__}: {e}"
         (d / "error.txt").write_text(f"{name}: {e}\n")
         _print({"ok": False, "error": f"{name}: {str(e).splitlines()[0]}"})
         return 1
@@ -259,7 +261,8 @@ def main(argv=None) -> int:
     ap.add_argument("--root", type=Path, default=ROOT)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("pick")
-    for step in ("research", "render"):
+    sub.add_parser("auth")
+    for step in ("research", "render", "upload"):
         sub.add_parser(step).add_argument("dir", type=Path)
     f = sub.add_parser("finish")
     f.add_argument("dir", type=Path)
@@ -287,6 +290,14 @@ def main(argv=None) -> int:
     if a.cmd == "render":
         d = a.dir.resolve()
         return run_step("render", d, lambda: render(root, d))
+    if a.cmd == "upload":
+        import youtube
+        d = a.dir.resolve()
+        return run_step("upload", d, lambda: youtube.upload(d))
+    if a.cmd == "auth":
+        import youtube
+        youtube.auth()
+        return 0
     if a.cmd == "finish":
         _print(finish(root, a.dir.resolve(), a.status))
         return 0
