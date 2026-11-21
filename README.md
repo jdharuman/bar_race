@@ -116,3 +116,39 @@ theme = "light"    # "light" (white) or "dark" (navy)
 # background = "#ffffff"   # optional overrides
 # text = "#1f2937"
 ```
+
+## Pillar walk (3D style)
+
+A second video style: the camera glides past a row of 3D pillars, one per row,
+each with a photo or flag, a name plate and a label (e.g. the year or season).
+It suits "record holder over time" topics. Set it in `video.toml`:
+
+```toml
+title = "Tallest Building in the World"
+style = "pillars"
+unit_suffix = " m"
+seconds_per_pillar = 3.0    # default 2.5
+pillar_color = "#d9822b"    # one colour for every pillar (default)
+pillar_colors = "single"    # or "image": colour from each image
+reviewed = true
+```
+
+Data goes in `pillars.csv` (instead of `data.csv`), rows in display order:
+
+```csv
+label,name,value,detail,image,source,estimated
+2010,Burj Khalifa,828,"Dubai, UAE",images/ae.png,https://en.wikipedia.org/...,false
+```
+
+`label`, `name` and `value` are required. `render`, `thumb` and `validate`
+work the same; the Short shows the last rows that fit at ≥ 0.8 s each.
+Race-only settings (`top_n`, `[[pace]]`, `--bars`, `thumb --year`) are
+ignored. The walk's sky look is fixed; the intro and end cards follow
+`channel.toml`.
+
+**Photos:** the tool never downloads images. Use images you have the rights
+to (flags, logos you're allowed to show, or free-licence photos such as
+Wikimedia Commons). Photos of people are often copyrighted and a common cause
+of takedowns. A row without an image gets an initials tile.
+
+Example: `weeks/2026-11-30-tallest-buildings/`.
