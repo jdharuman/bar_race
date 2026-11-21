@@ -147,6 +147,34 @@ def pick(root: Path, today: date) -> dict:
             "youtube_url": row["youtube_url"], "redo_of": topic["redo_of"]}
 
 
+def studio(vid: str) -> str:
+    return f"https://studio.youtube.com/video/{vid}/edit"
+
+
+def finish(root: Path, d: Path, status: str) -> dict:
+    """Move the picked row to topics_done.csv, release the lock, build the report."""
+    row = json.loads((d / "topic.json").read_text())["row"]
+    up = json.loads((d / "upload.json").read_text()) if (d / "upload.json").exists() else {}
+    err = (d / "error.txt").read_text().strip() if (d / "error.txt").exists() else ""
+    if status == "failed" and not err:
+        err = "unknown error (see the n8n execution log)"
+    move_to_done(root, row, folder=str(d), status=status, error=err,
+                 main_video_id=up.get("main", ""), short_video_id=up.get("short", ""))
+    release_lock(root)
+    name = row["title"] or row["youtube_url"]
+    links = {k: studio(up[k]) for k in ("main", "short") if up.get(k)}
+    if status == "uploaded":
+        msg = (f"✅ Ready to review: {name}\nMain: {links.get('main', '-')}\n"
+               f"Short: {links.get('short', '-')}\nWatch both, then publish in YouTube Studio.")
+    else:
+        msg = (f"❌ FAILED: {name}\n{err[-1500:]}\n"
+               "To retry, put the row back at the top of topics.csv.")
+        if links:
+            msg += "\nPartly uploaded (private): " + " ".join(links.values())
+    return {"status": status, "title": name, "main_url": links.get("main", ""),
+            "short_url": links.get("short", ""), "error": err, "message": msg}
+
+
 def _print(obj) -> None:
     print(json.dumps(obj))
 
@@ -156,6 +184,9 @@ def main(argv=None) -> int:
     ap.add_argument("--root", type=Path, default=ROOT)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("pick")
+    f = sub.add_parser("finish")
+    f.add_argument("dir", type=Path)
+    f.add_argument("--status", choices=["uploaded", "failed"], required=True)
     a = ap.parse_args(argv)
     root = a.root.resolve()
 
@@ -173,6 +204,9 @@ def main(argv=None) -> int:
             release_lock(root)
             _print({"invalid": str(e), "message": f"barrace: skipped a bad topics.csv row: {e}"})
             return 2
+    if a.cmd == "finish":
+        _print(finish(root, a.dir.resolve(), a.status))
+        return 0
     return 1
 
 

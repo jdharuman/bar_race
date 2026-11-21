@@ -110,3 +110,51 @@ def test_redo_copies_previous(tmp_path):
     assert not (d / "out").exists()
     assert not (d / "upload.json").exists()
     assert out["redo_of"] == str(prev)
+
+
+def picked(tmp_path, rows):
+    write_topics(tmp_path, rows)
+    daily.take_lock(tmp_path)
+    return Path(daily.pick(tmp_path, TODAY)["dir"])
+
+
+def test_finish_moves_exact_row(tmp_path):
+    a, b, c = row(title="A"), row(title="B"), row(title="C")
+    d = picked(tmp_path, [a, b])
+    write_topics(tmp_path, [c, a, b])  # user prepended a row mid-run
+    (d / "upload.json").write_text(json.dumps({"main": "m1", "short": "s1"}))
+    daily.finish(tmp_path, d, "uploaded")
+    assert daily.read_rows(tmp_path / "topics.csv") == [c, b]
+    done = daily.read_rows(tmp_path / "topics_done.csv")
+    assert [r["title"] for r in done] == ["A"]
+    assert done[0]["status"] == "uploaded"
+    assert done[0]["folder"] == str(d)
+    assert (done[0]["main_video_id"], done[0]["short_video_id"]) == ("m1", "s1")
+
+
+def test_finish_failed_records_error_and_partial_ids(tmp_path):
+    d = picked(tmp_path, [row()])
+    (d / "error.txt").write_text("research: boom\n")
+    (d / "upload.json").write_text(json.dumps({"main": "m1"}))
+    out = daily.finish(tmp_path, d, "failed")
+    done = daily.read_rows(tmp_path / "topics_done.csv")[0]
+    assert done["status"] == "failed"
+    assert "boom" in done["error"]
+    assert done["main_video_id"] == "m1"
+    assert "FAILED" in out["message"] and "boom" in out["message"]
+
+
+def test_finish_message_links(tmp_path):
+    d = picked(tmp_path, [row()])
+    (d / "upload.json").write_text(json.dumps({"main": "m1", "short": "s1"}))
+    out = daily.finish(tmp_path, d, "uploaded")
+    assert "https://studio.youtube.com/video/m1/edit" in out["message"]
+    assert "https://studio.youtube.com/video/s1/edit" in out["message"]
+
+
+def test_finish_releases_lock(tmp_path):
+    d = picked(tmp_path, [row()])
+    r = cli(tmp_path, "finish", str(d), "--status", "uploaded")
+    assert r.returncode == 0, r.stderr
+    assert not (tmp_path / "videos" / ".lock").exists()
+    assert json.loads(r.stdout)["status"] == "uploaded"
