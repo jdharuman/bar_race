@@ -193,7 +193,7 @@ def claude_cmd(d: Path, root: Path) -> list[str]:
              f"Bash({bb} validate:*)", "Bash(ls:*)", "Bash(mkdir:*)", "Bash(unzip:*)",
              "Bash(file:*)", "Bash(head:*)", "Bash(wc:*)"]
     denied = ["Read(~/.config/barrace/**)", "Read(~/.ssh/**)", "Bash(yt-dlp --exec:*)"]
-    return [os.environ.get("CLAUDE_BIN", "claude"), "-p", prompt, "--model", "sonnet",
+    return [os.environ.get("CLAUDE_BIN", "claude"), "-p", prompt, "--model", "sonnet", "--setting-sources", "project",
             "--allowedTools", *tools, "--disallowedTools", *denied,
             "--output-format", "json"]
 
