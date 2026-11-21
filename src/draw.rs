@@ -36,6 +36,8 @@ pub struct Painter {
     images: Vec<Option<Pixmap>>,
     bg: Color,
     fg: Color,
+    grid_a: f32,
+    year_a: f32,
     /// Strings drawn by the last `paint` call (used by tests and the end card).
     pub last_strings: Vec<String>,
 }
@@ -80,8 +82,10 @@ impl Painter {
             text: Text::new(),
             item_colors,
             images,
-            bg: hex(&ch.background),
-            fg: hex(&ch.text),
+            bg: hex(&ch.colors().0),
+            fg: hex(&ch.colors().1),
+            grid_a: if ch.theme == crate::config::Theme::Light { 0.12 } else { 0.10 },
+            year_a: if ch.theme == crate::config::Theme::Light { 0.35 } else { 0.25 },
             last_strings: Vec::new(),
         })
     }
@@ -110,6 +114,9 @@ impl Painter {
 
     #[allow(clippy::too_many_arguments)]
     fn txt(&mut self, pm: &mut Pixmap, s: &str, x: f32, y: f32, size: f32, bold: bool, color: Color, align: Align) {
+        if s.is_empty() {
+            return;
+        }
         self.text.draw(pm, s, x, y, size, bold, color, align);
         self.last_strings.push(s.to_string());
     }
@@ -178,7 +185,9 @@ impl Painter {
             self.txt(pm, &note, cx, y, l.label_size, false, with_alpha(fg, 0.7), Align::Center);
         }
         let name = self.ch.name.clone();
-        self.txt(pm, &name, cx, l.height as f32 * 0.82, l.title_size * 0.8, true, fg, Align::Center);
+        if !name.is_empty() {
+            self.txt(pm, &name, cx, l.height as f32 * 0.82, l.title_size * 0.8, true, fg, Align::Center);
+        }
     }
 
     /// Centre of the image/initials circle that sits just right of a bar's end.
@@ -193,7 +202,7 @@ impl Painter {
         let l = self.layout.clone();
         let chart_w = l.chart_right - l.chart_left;
         let mut paint = Paint::default();
-        paint.set_color(with_alpha(self.fg, 0.10));
+        paint.set_color(with_alpha(self.fg, self.grid_a));
         let tick_size = l.label_size * 0.75;
         for v in nice_ticks(axis_max) {
             let x = l.chart_left + (v / axis_max) as f32 * chart_w;
@@ -228,7 +237,7 @@ impl Painter {
         // year counter
         let year = crate::fmt::format_time(fs.t, self.ds.granularity);
         let align = if l.year_centered { Align::Center } else { Align::Right };
-        self.txt(pm, &year, l.year_pos.0, l.year_pos.1, l.year_size, true, with_alpha(self.fg, 0.25), align);
+        self.txt(pm, &year, l.year_pos.0, l.year_pos.1, l.year_size, true, with_alpha(self.fg, self.year_a), align);
         self.paint_axis(pm, fs.axis_max);
         // bars, bottom-most first so overtaking bars draw on top
         for b in fs.bars.iter().rev() {
@@ -236,8 +245,10 @@ impl Painter {
         }
         // watermark
         let name = self.ch.name.clone();
-        let (wx, wy) = l.watermark_pos;
-        self.txt(pm, &name, wx, wy, l.watermark_size, true, with_alpha(self.fg, 0.4), Align::Right);
+        if !name.is_empty() {
+            let (wx, wy) = l.watermark_pos;
+            self.txt(pm, &name, wx, wy, l.watermark_size, true, with_alpha(self.fg, 0.4), Align::Right);
+        }
     }
 
     fn paint_bar(&mut self, pm: &mut Pixmap, b: &BarState, axis_max: f64) {
@@ -271,7 +282,7 @@ impl Painter {
                 paint.anti_alias = true;
                 pm.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
                 let ini = initials(&self.ds.items[b.idx].name);
-                self.txt(pm, &ini, icx, cy, bh * 0.42, true, with_alpha(self.fg, b.alpha), Align::Center);
+                self.txt(pm, &ini, icx, cy, bh * 0.42, true, with_alpha(Color::WHITE, b.alpha), Align::Center);
             }
         }
         let pad = label_size * 0.5;
@@ -280,7 +291,8 @@ impl Painter {
         let fg = with_alpha(self.fg, b.alpha);
         let mut after = icx + bh / 2.0 + pad;
         if name_w + 2.0 * pad <= bw {
-            self.txt(pm, &name, x0 + pad, cy, label_size, true, fg, Align::Left);
+            // inside the bar: always white for contrast against the bar colour
+            self.txt(pm, &name, x0 + pad, cy, label_size, true, with_alpha(Color::WHITE, b.alpha), Align::Left);
         } else {
             self.txt(pm, &name, after, cy, label_size, true, fg, Align::Left);
             after += name_w + pad;
@@ -480,7 +492,7 @@ mod tests {
         let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
         let fs = settle(&ds, 10, 2000.0);
         let cfg = VideoConfig { title: "Big Title".into(), ..Default::default() };
-        let mut p = Painter::new(&ds, &cfg, &ChannelConfig::default(), Layout::landscape(0.5, 10)).unwrap();
+        let mut p = Painter::new(&ds, &cfg, &ChannelConfig { theme: crate::config::Theme::Dark, ..Default::default() }, Layout::landscape(0.5, 10)).unwrap();
         let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
         p.paint(&mut pm, &Phase::Intro { t: 0.5 }, &fs);
         let (w, h) = (pm.width(), pm.height());
@@ -507,7 +519,8 @@ mod tests {
         let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
         let fs = settle(&ds, 8, 2001.0);
         let cfg = VideoConfig { title: "The Largest Economies in the Entire World by Nominal GDP".into(), ..Default::default() };
-        let mut p = Painter::new(&ds, &cfg, &ChannelConfig::default(), Layout::portrait(0.5, 8)).unwrap();
+        let dark = ChannelConfig { theme: crate::config::Theme::Dark, ..Default::default() };
+        let mut p = Painter::new(&ds, &cfg, &dark, Layout::portrait(0.5, 8)).unwrap();
         let (w, h) = (p.layout().width, p.layout().height);
         let mut pm = Pixmap::new(w, h).unwrap();
         p.paint(&mut pm, &Phase::Race { t: 2001.0 }, &fs);
@@ -538,5 +551,43 @@ mod tests {
         let pm = load_circle_image(&png, 40).unwrap();
         assert_eq!(pm.pixel(0, 0).unwrap().alpha(), 0);
         assert_eq!(pm.pixel(20, 20).unwrap().alpha(), 255);
+    }
+
+    fn paint_fixture(ch: ChannelConfig) -> (Painter, Pixmap) {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let fs = settle(&ds, 10, 2001.0);
+        let mut p = Painter::new(&ds, &VideoConfig::default(), &ch, Layout::landscape(0.5, 10)).unwrap();
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint(&mut pm, &Phase::Race { t: 2001.0 }, &fs);
+        (p, pm)
+    }
+
+    #[test]
+    fn light_theme_default_white() {
+        let (_, pm) = paint_fixture(ChannelConfig::default());
+        let px = pm.pixel(2, 2).unwrap();
+        assert_eq!((px.red(), px.green(), px.blue()), (255, 255, 255));
+    }
+
+    #[test]
+    fn dark_theme_navy() {
+        let ch = ChannelConfig { theme: crate::config::Theme::Dark, ..Default::default() };
+        let (_, pm) = paint_fixture(ch);
+        let px = pm.pixel(2, 2).unwrap();
+        assert_eq!((px.red(), px.green(), px.blue()), (0x0f, 0x17, 0x2a));
+    }
+
+    #[test]
+    fn empty_name_draws_no_watermark() {
+        let (p, _) = paint_fixture(ChannelConfig::default());
+        assert!(!p.last_strings.iter().any(|s| s.is_empty() || s == "Stat Race"), "{:?}", p.last_strings);
+    }
+
+    #[test]
+    fn background_override_wins() {
+        let ch = ChannelConfig { background: Some("#112233".into()), ..Default::default() };
+        let (_, pm) = paint_fixture(ch);
+        let px = pm.pixel(2, 2).unwrap();
+        assert_eq!((px.red(), px.green(), px.blue()), (0x11, 0x22, 0x33));
     }
 }

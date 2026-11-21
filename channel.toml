@@ -1,5 +1,6 @@
-name = "Stat Race"
-# logo = "assets/logo.png"
-background = "#0f172a"
-text = "#ffffff"
+# Channel identity, read from the current directory.
+name = ""          # watermark + end-card name; empty = none
+theme = "light"    # "light" or "dark"
+# background = "#ffffff"   # optional override
+# text = "#1f2937"         # optional override
 accent = "#38bdf8"

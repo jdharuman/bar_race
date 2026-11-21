@@ -96,29 +96,51 @@ impl VideoConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ChannelConfig {
+    /// Watermark / end-card name; empty = none.
     pub name: String,
     pub logo: Option<PathBuf>,
-    pub background: String,
-    pub text: String,
+    pub theme: Theme,
+    /// Overrides the theme's background colour.
+    pub background: Option<String>,
+    /// Overrides the theme's text colour.
+    pub text: Option<String>,
     pub accent: String,
 }
 
 impl Default for ChannelConfig {
     fn default() -> Self {
         Self {
-            name: "Stat Race".into(),
+            name: String::new(),
             logo: None,
-            background: "#0f172a".into(),
-            text: "#ffffff".into(),
+            theme: Theme::Light,
+            background: None,
+            text: None,
             accent: "#38bdf8".into(),
         }
     }
 }
 
 impl ChannelConfig {
+    /// (background, text) hex colours after theme defaults and overrides.
+    pub fn colors(&self) -> (String, String) {
+        let (bg, fg) = match self.theme {
+            Theme::Light => ("#ffffff", "#1f2937"),
+            Theme::Dark => ("#0f172a", "#ffffff"),
+        };
+        (self.background.clone().unwrap_or(bg.into()), self.text.clone().unwrap_or(fg.into()))
+    }
+
     pub fn load_or_default(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
