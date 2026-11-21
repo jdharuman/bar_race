@@ -25,6 +25,7 @@ pub struct VideoConfig {
     pub pace: Vec<PaceSection>,
     pub short_seconds: f64,
     pub music: Option<PathBuf>,
+    pub number_style: crate::fmt::NumberStyle,
     pub reviewed: bool,
     pub colors: BTreeMap<String, String>,
 }
@@ -42,6 +43,7 @@ impl Default for VideoConfig {
             pace: Vec::new(),
             short_seconds: 58.0,
             music: None,
+            number_style: Default::default(),
             reviewed: false,
             colors: BTreeMap::new(),
         }

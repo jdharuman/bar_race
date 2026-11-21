@@ -200,7 +200,7 @@ impl Painter {
             if let Some(r) = Rect::from_xywh(x, l.chart_top - tick_size * 0.4, (l.height as f32 / 1080.0).max(1.0), l.chart_bottom - l.chart_top) {
                 pm.fill_rect(r, &paint, Transform::identity(), None);
             }
-            let label = format_value(v, &self.cfg.unit_prefix, &self.cfg.unit_suffix);
+            let label = format_value(v, &self.cfg.unit_prefix, &self.cfg.unit_suffix, self.cfg.number_style);
             let y = l.chart_top - tick_size * 1.1;
             self.txt(pm, &label, x, y, tick_size, false, with_alpha(self.fg, 0.45), Align::Center);
         }
@@ -285,7 +285,7 @@ impl Painter {
             self.txt(pm, &name, after, cy, label_size, true, fg, Align::Left);
             after += name_w + pad;
         }
-        let mut value = format_value(b.value, &self.cfg.unit_prefix, &self.cfg.unit_suffix);
+        let mut value = format_value(b.value, &self.cfg.unit_prefix, &self.cfg.unit_suffix, self.cfg.number_style);
         if b.estimated {
             value.push('*');
         }
