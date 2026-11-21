@@ -1,9 +1,9 @@
 use crate::config::{ChannelConfig, VideoConfig};
 use crate::data::Dataset;
-use crate::draw::Painter;
+use crate::draw::{Overlay, Painter};
 use crate::encode::{AudioSpec, Encoder};
 use crate::layout::Layout;
-use crate::scene::RankTracker;
+use crate::scene::{Crossfade, RankTracker};
 use crate::timeline::{Format, Phase, Timeline};
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
@@ -40,7 +40,7 @@ pub fn thumb(week_dir: &Path, year: Option<f64>) -> Result<PathBuf> {
     let ds = Dataset::load(week_dir)?;
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
     let layout = Layout::landscape(1.0, cfg.top_n);
-    let year = year.unwrap_or(ds.last_year as f64);
+    let year = year.unwrap_or(ds.last);
     let mut tracker = RankTracker::new(ds.items.len(), layout.top_n);
     let mut fs = tracker.step(&ds, year, 1.0 / 60.0);
     for _ in 0..120 {
@@ -60,7 +60,38 @@ pub fn thumb(week_dir: &Path, year: Option<f64>) -> Result<PathBuf> {
     Ok(out)
 }
 
-pub fn render(week_dir: &Path, fmt: Format, preview: bool) -> Result<PathBuf> {
+/// Where the soundtrack comes from.
+#[derive(Debug, Clone, Default)]
+pub enum MusicChoice {
+    /// video.toml `music`, else a track from ./music
+    #[default]
+    Auto,
+    Path(PathBuf),
+    Off,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RenderOpts {
+    pub preview: bool,
+    pub bars: Option<usize>,
+    pub short_bars: Option<usize>,
+    pub music: MusicChoice,
+}
+
+/// Bars shown for this format: CLI override, else video.toml.
+pub fn effective_top_n(cfg: &VideoConfig, fmt: Format, opts: &RenderOpts) -> Result<usize> {
+    let n = match fmt {
+        Format::Main => opts.bars.unwrap_or(cfg.top_n),
+        Format::Short => opts.short_bars.unwrap_or(cfg.top_n_short),
+    };
+    if !(1..=20).contains(&n) {
+        bail!("--bars/--short-bars must be 1–20 (got {n})");
+    }
+    Ok(n)
+}
+
+pub fn render(week_dir: &Path, fmt: Format, opts: &RenderOpts) -> Result<PathBuf> {
+    let preview = opts.preview;
     let cfg = VideoConfig::load(&week_dir.join("video.toml"))?;
     if !cfg.reviewed {
         bail!("video.toml has reviewed = false: check data.csv, then set reviewed = true");
@@ -69,17 +100,29 @@ pub fn render(week_dir: &Path, fmt: Format, preview: bool) -> Result<PathBuf> {
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
     let (scale, fps) = if preview { (0.5, 30) } else { (1.0, 60) };
     let (layout, name) = match fmt {
-        Format::Main => (Layout::landscape(scale, cfg.top_n), "main.mp4"),
-        Format::Short => (Layout::portrait(scale, cfg.top_n_short), "short.mp4"),
+        Format::Main => (Layout::landscape(scale, effective_top_n(&cfg, fmt, opts)?), "main.mp4"),
+        Format::Short => (Layout::portrait(scale, effective_top_n(&cfg, fmt, opts)?), "short.mp4"),
     };
     let tl = Timeline::new(fmt, &cfg, &ds, fps);
     let out_dir = week_dir.join("out");
     std::fs::create_dir_all(&out_dir)?;
     let out = out_dir.join(name);
+    let (events, ev_errors) = crate::events::parse(week_dir)?;
+    if !ev_errors.is_empty() {
+        bail!("events.csv has errors:\n  {}", ev_errors.join("\n  "));
+    }
     let mut painter = Painter::new(&ds, &cfg, &ch, layout.clone())?;
+    painter.set_events(events.clone());
+    let mut caption_fade = Crossfade::new(0.3);
+    let mut leader_fade = Crossfade::new(0.4);
     let mut tracker = RankTracker::new(ds.items.len(), layout.top_n);
     let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
-    let audio = match pick_music(&cfg, week_dir, Path::new("music")) {
+    let track = match &opts.music {
+        MusicChoice::Off => None,
+        MusicChoice::Path(p) => Some(p.clone()),
+        MusicChoice::Auto => pick_music(&cfg, week_dir, Path::new("music")),
+    };
+    let audio = match track {
         Some(path) if path.exists() => Some(AudioSpec { path, duration: tl.total_seconds() }),
         Some(path) => bail!("music file not found: {}", path.display()),
         None => {
@@ -93,12 +136,16 @@ pub fn render(week_dir: &Path, fmt: Format, preview: bool) -> Result<PathBuf> {
     for f in 0..total {
         let phase = tl.phase_at(f);
         let year = match phase {
-            Phase::Intro { .. } => tl.start_year as f64,
-            Phase::Race { year } => year,
-            Phase::Hold | Phase::End { .. } => tl.end_year as f64,
+            Phase::Intro { .. } => tl.start,
+            Phase::Race { t } => t,
+            Phase::Hold | Phase::End { .. } => tl.end,
         };
         let fs = tracker.step(&ds, year, dt);
-        painter.paint(&mut pm, &phase, &fs);
+        let ov = Overlay {
+            caption: caption_fade.step(crate::events::active(&events, year), dt),
+            leader: leader_fade.step(fs.leader, dt),
+        };
+        painter.paint_with(&mut pm, &phase, &fs, &ov);
         enc.write_frame(pm.data())?;
         if total >= 10 && f % (total / 10) == 0 {
             eprintln!("{name}: {}%", f * 100 / total);
@@ -138,5 +185,18 @@ mod tests {
     fn empty_music_dir_gives_none() {
         let dir = crate::testutil::temp_week("x\n");
         assert_eq!(pick_music(&VideoConfig::default(), &dir, &dir.join("missing")), None);
+    }
+
+    #[test]
+    fn effective_top_n_defaults_and_overrides() {
+        let cfg = VideoConfig::default();
+        let opts = RenderOpts::default();
+        assert_eq!(effective_top_n(&cfg, Format::Short, &opts).unwrap(), 12);
+        assert_eq!(effective_top_n(&cfg, Format::Main, &opts).unwrap(), 10);
+        let opts = RenderOpts { bars: Some(15), short_bars: Some(9), ..Default::default() };
+        assert_eq!(effective_top_n(&cfg, Format::Short, &opts).unwrap(), 9);
+        assert_eq!(effective_top_n(&cfg, Format::Main, &opts).unwrap(), 15);
+        let bad = RenderOpts { bars: Some(21), ..Default::default() };
+        assert!(effective_top_n(&cfg, Format::Main, &bad).is_err());
     }
 }

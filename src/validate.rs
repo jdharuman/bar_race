@@ -8,14 +8,15 @@ pub struct Report {
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
     pub items: usize,
-    pub first_year: i32,
-    pub last_year: i32,
+    pub first: f64,
+    pub last: f64,
+    pub granularity: crate::data::Granularity,
     pub estimated_share: f64,
     pub reviewed: bool,
 }
 
 pub fn run(week_dir: &Path) -> Result<Report> {
-    let (items, mut errors) = parse(week_dir)?;
+    let (items, mut errors, g) = parse(week_dir)?;
     let mut warnings = Vec::new();
     // ponytail: load() also range-checks, so bad ranges surface here as one video.toml error
     let reviewed = match VideoConfig::load(&week_dir.join("video.toml")) {
@@ -25,6 +26,10 @@ pub fn run(week_dir: &Path) -> Result<Report> {
             false
         }
     };
+    match crate::events::parse(week_dir) {
+        Ok((_, ev_errors)) => errors.extend(ev_errors),
+        Err(e) => errors.push(format!("events.csv: {e:#}")),
+    }
     if !reviewed {
         warnings.push("reviewed = false: check data.csv, then set reviewed = true in video.toml".into());
     }
@@ -36,13 +41,15 @@ pub fn run(week_dir: &Path) -> Result<Report> {
             warnings.push(format!("'{}' has unsourced values not marked estimated", it.name));
         }
     }
-    let ds = Dataset::from_items(items);
+    let mut ds = Dataset::from_items(items);
+    ds.granularity = ds.granularity.max(g);
     Ok(Report {
         errors,
         warnings,
         items: ds.items.len(),
-        first_year: ds.first_year,
-        last_year: ds.last_year,
+        first: ds.first,
+        last: ds.last,
+        granularity: ds.granularity,
         estimated_share: ds.estimated_share(),
         reviewed,
     })

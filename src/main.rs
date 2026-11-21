@@ -2,6 +2,7 @@ mod config;
 mod data;
 mod draw;
 mod encode;
+mod events;
 mod fmt;
 mod layout;
 mod render;
@@ -35,6 +36,18 @@ enum Cmd {
         /// Half resolution, 30 fps, for quick checks
         #[arg(long)]
         preview: bool,
+        /// Bars in the main video (1–20; default: video.toml top_n)
+        #[arg(long)]
+        bars: Option<usize>,
+        /// Bars in the Short (1–20; default: video.toml top_n_short, 12)
+        #[arg(long)]
+        short_bars: Option<usize>,
+        /// Music file to use instead of the default pick
+        #[arg(long, conflicts_with = "no_music")]
+        music: Option<PathBuf>,
+        /// Render without music
+        #[arg(long)]
+        no_music: bool,
     },
     /// Render out/thumb.png (1280x720)
     Thumb {
@@ -67,7 +80,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Cmd::Validate { dir } => {
             let r = validate::run(&dir)?;
             println!("items: {}", r.items);
-            println!("years: {}–{}", r.first_year, r.last_year);
+            println!("time: {}–{}", fmt::format_time(r.first, r.granularity), fmt::format_time(r.last, r.granularity));
             println!("estimated: {:.1}%", r.estimated_share * 100.0);
             println!("reviewed: {}", if r.reviewed { "yes" } else { "no" });
             for w in &r.warnings {
@@ -78,7 +91,13 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             }
             Ok(if r.errors.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
         }
-        Cmd::Render { dir, format, preview } => {
+        Cmd::Render { dir, format, preview, bars, short_bars, music, no_music } => {
+            let music = match (music, no_music) {
+                (_, true) => render::MusicChoice::Off,
+                (Some(p), _) => render::MusicChoice::Path(p),
+                _ => render::MusicChoice::Auto,
+            };
+            let opts = render::RenderOpts { preview, bars, short_bars, music };
             use timeline::Format;
             let formats: &[Format] = match format {
                 FormatArg::Main => &[Format::Main],
@@ -86,7 +105,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                 FormatArg::Both => &[Format::Main, Format::Short],
             };
             for &f in formats {
-                render::render(&dir, f, preview)?;
+                render::render(&dir, f, &opts)?;
             }
             Ok(ExitCode::SUCCESS)
         }
