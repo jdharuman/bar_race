@@ -11,7 +11,19 @@ the data must be right, sourced and complete. Follow the hard rules in the
 repo's `CLAUDE.md` above everything here.
 
 Work only inside the video folder you were given (`<dir>`). Never render,
-upload or touch files outside `<dir>`.
+upload or touch files outside `<dir>`: you can't write elsewhere, and a
+change to the repo's tool files fails the run.
+
+**Commands you can run:** `curl`, `uv run …` (Python, for all data
+processing: `uv run --with pandas python <dir>/scripts/x.py`), `yt-dlp`,
+`ls`, `mkdir`, `unzip`, `file`, `head`, `wc`, and `<barrace> validate`. To
+copy, move or delete files, use Python via `uv run`. Plus the Read, Write,
+Edit, Glob, Grep, WebSearch and WebFetch tools.
+
+**Can't do it honestly?** If no trustworthy source covers the topic (or
+most of its values would be guesses), don't invent data. Write the reason in
+`research_notes.md` and stop without writing `metadata.json`. The run then
+fails visibly and the owner can rephrase the topic.
 
 ## 1. Read the topic
 
@@ -23,10 +35,13 @@ upload or touch files outside `<dir>`.
 ```
 
 - **Redo** (`comment` non-empty): the folder already holds the previous
-  attempt (copied from `redo_of`, if found). Read `comment` — the owner's
-  list of mistakes — fix exactly those, keep everything else, and note each
-  fix in `research_notes.md` under "Redo fixes". If the folder is empty,
-  research from scratch and also honour the comment.
+  attempt (copied from `redo_of`, if found), with its notes renamed to
+  `research_notes.prev.md`. Read `comment`, the owner's list of mistakes,
+  fix exactly those, keep everything else, and write a new
+  `research_notes.md` (carry over what's still true from the `.prev` file)
+  with a `## Redo fixes` section listing each fix. **The run fails without
+  that section.** If the folder is empty, research from scratch and also
+  honour the comment (still with `## Redo fixes`).
 - **YouTube link:** read metadata only:
   `yt-dlp --js-runtimes node --dump-json --skip-download <url>` → title,
   description, duration, chapters. Use them to learn the topic, the set of

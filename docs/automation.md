@@ -46,8 +46,10 @@ any error.
    The next run copies the previous folder, fixes what the comment says, and
    uploads a new private pair. Delete the old private videos in Studio.
 4. A failed run (❌ message): fix the cause if it's setup (see below), then put
-   the row back at the top. The next day's run moves on to the next row on its
-   own.
+   the row back at the top **without a comment**. The retry continues in the
+   same folder and skips the steps that already worked, so a half-finished
+   upload never uploads twice. If you don't, the next day's run moves on to
+   the next row.
 
 Want it now instead of 02:00? In n8n, open "barrace daily video" → "Execute
 workflow", or on the machine:

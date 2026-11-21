@@ -28,11 +28,20 @@ class StepError(Exception):
     pass
 
 
+class BadFile(Exception):
+    pass
+
+
 def read_rows(path: Path) -> list[dict]:
     if not path.exists():
         return []
-    with path.open(newline="", encoding="utf-8") as f:
-        return [{k: (v or "").strip() for k, v in r.items() if k} for r in csv.DictReader(f)
+    with path.open(newline="", encoding="utf-8-sig") as f:  # -sig: Excel's BOM
+        reader = csv.DictReader(f)
+        missing = [c for c in TOPIC_COLS[:3] if c not in (reader.fieldnames or [])]
+        if missing:
+            raise BadFile(f"{path.name}: header row must be {','.join(TOPIC_COLS)} "
+                          f"(missing {', '.join(missing)}); file left unchanged")
+        return [{k: (v or "").strip() for k, v in r.items() if k} for r in reader
                 if any((v or "").strip() for v in r.values())]
 
 
@@ -75,9 +84,11 @@ def _norm(s: str) -> str:
     return " ".join(s.lower().split())
 
 
-def find_previous(row: dict, done_rows: list[dict], root: Path) -> Path | None:
+def find_previous(row: dict, done_rows: list[dict], root: Path, status: str | None = None) -> Path | None:
     vid = video_id(row.get("youtube_url", ""))
     for d in reversed(done_rows):
+        if status and d.get("status") != status:
+            continue
         same = (row.get("title") and _norm(d.get("title", "")) == _norm(row["title"])) or \
                (vid and video_id(d.get("youtube_url", "")) == vid)
         folder = Path(d.get("folder", "")) if d.get("folder") else None
@@ -132,14 +143,27 @@ def pick(root: Path, today: date) -> dict:
     if problem := row_problem(row):
         move_to_done(root, row, status="failed", error=f"pick: {problem}")
         raise Invalid(problem)
+    done = read_rows(root / "topics_done.csv")
+    if not row["comment"]:
+        # retry of a failed run: continue in its folder; finished steps are skipped
+        prev = find_previous(row, done, root, status="failed")
+        if prev:
+            (prev / "error.txt").unlink(missing_ok=True)
+            topic = json.loads((prev / "topic.json").read_text())
+            topic["resumed_at"] = datetime.now().isoformat(timespec="seconds")
+            (prev / "topic.json").write_text(json.dumps(topic, indent=2))
+            return {"dir": str(prev), "style": row["style"], "title": row["title"],
+                    "youtube_url": row["youtube_url"], "redo_of": None, "resumed": True}
     base = root / "videos" / f"{today.isoformat()}-{slugify(row)}"
     d, n = base, 2
     while d.exists():
         d, n = base.with_name(f"{base.name}-{n}"), n + 1
-    prev = find_previous(row, read_rows(root / "topics_done.csv"), root) if row["comment"] else None
+    prev = find_previous(row, done, root) if row["comment"] else None
     if prev:
         shutil.copytree(prev, d, ignore=shutil.ignore_patterns(
-            "out", "upload.json", "error.txt", "topic.json"))
+            "out", "upload.json", "error.txt", "topic.json", ".ok-*", "research_notes.prev.md"))
+        if (d / "research_notes.md").exists():  # fresh notes prove the redo was worked on
+            (d / "research_notes.md").rename(d / "research_notes.prev.md")
     else:
         d.mkdir(parents=True)
     topic = {"row": row, "redo_of": str(prev) if prev else None,
@@ -164,12 +188,13 @@ def claude_cmd(d: Path, root: Path) -> list[str]:
         f"the topic in {d}/topic.json and write every output file into {d}. "
         f"The barrace binary is {bb}. Finish only when `{bb} validate {d}` reports no errors."
     )
-    tools = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch",
-             "Bash(curl:*)", "Bash(uv run:*)", "Bash(yt-dlp:*)", f"Bash({bb} validate:*)",
-             "Bash(ls:*)", "Bash(mkdir:*)", "Bash(unzip:*)", "Bash(file:*)", "Bash(head:*)",
-             "Bash(wc:*)"]
+    tools = ["Read", f"Write(/{d}/**)", f"Edit(/{d}/**)", "Glob", "Grep", "WebSearch",
+             "WebFetch", "Bash(curl:*)", "Bash(uv run:*)", "Bash(yt-dlp:*)",
+             f"Bash({bb} validate:*)", "Bash(ls:*)", "Bash(mkdir:*)", "Bash(unzip:*)",
+             "Bash(file:*)", "Bash(head:*)", "Bash(wc:*)"]
+    denied = ["Read(~/.config/barrace/**)", "Read(~/.ssh/**)", "Bash(yt-dlp --exec:*)"]
     return [os.environ.get("CLAUDE_BIN", "claude"), "-p", prompt, "--model", "opus",
-            "--permission-mode", "acceptEdits", "--allowedTools", *tools,
+            "--allowedTools", *tools, "--disallowedTools", *denied,
             "--output-format", "json"]
 
 
@@ -177,10 +202,33 @@ def _tail(text: str, n: int = 30) -> str:
     return "\n".join((text or "").strip().splitlines()[-n:])
 
 
+# The agent may change only its video folder. Anything here changing fails the run.
+GUARDED = ["automation", "src", ".claude", "n8n", "music", "CLAUDE.md", "channel.toml",
+           "Cargo.toml"]
+AGENT_ENV = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TZ", "CLAUDE_CODE_OAUTH_TOKEN",
+             "CLAUDE_BIN", "BARRACE"]
+
+
+def snapshot(root: Path) -> dict:
+    files = {}
+    for g in GUARDED:
+        p = root / g
+        for f in ([p] if p.is_file() else p.rglob("*") if p.is_dir() else []):
+            if f.is_file() and "__pycache__" not in f.parts and ".venv" not in f.parts:
+                st = f.stat()
+                files[str(f.relative_to(root))] = (st.st_mtime_ns, st.st_size)
+    return files
+
+
 def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
     cmd = claude_cmd(d, root)
+    # ponytail: env scrub + path-scoped writes + tripwire; `uv run` can still run any
+    # Python as this user. Real boundary = Claude Code sandbox or a separate unix user.
+    env = {k: os.environ[k] for k in AGENT_ENV if k in os.environ}
+    before = snapshot(root)
     for attempt in (1, 2):
-        r = run(cmd, cwd=root, capture_output=True, text=True, timeout=RESEARCH_TIMEOUT_S)
+        r = run(cmd, cwd=root, env=env, capture_output=True, text=True,
+                timeout=RESEARCH_TIMEOUT_S)
         out = f"{r.stdout or ''}\n{r.stderr or ''}"
         (d / "research.log").write_text(out)
         limited = "usage limit" in out.lower() or "limit reached" in out.lower()
@@ -190,8 +238,19 @@ def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
         if r.returncode != 0:
             raise StepError(f"claude exited {r.returncode}\n{_tail(out)}")
         break
+    after = snapshot(root)
+    changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+    if changed:
+        raise StepError("research changed tool files outside the video folder: "
+                        + ", ".join(changed[:10]) + " (check with git diff before running again)")
     if not (d / "metadata.json").exists():
         raise StepError("claude finished but wrote no metadata.json")
+    topic = json.loads((d / "topic.json").read_text()) if (d / "topic.json").exists() else {}
+    notes = d / "research_notes.md"
+    if topic.get("row", {}).get("comment") and (
+            not notes.exists() or "redo fixes" not in notes.read_text().lower()):
+        raise StepError("redo: research_notes.md has no 'Redo fixes' section, "
+                        "so the comment was not worked on")
     if not ((d / "data.csv").exists() or (d / "pillars.csv").exists()):
         raise StepError("claude finished but wrote no data.csv or pillars.csv")
     v = run([barrace_bin(root), "validate", str(d)], cwd=root, capture_output=True, text=True)
@@ -254,7 +313,12 @@ def finish(root: Path, d: Path, status: str) -> dict:
 
 def start(root: Path, today: date) -> tuple[int, dict]:
     """Lock + pick. Exit codes: 0 picked, 2 invalid row, 3 empty list, 4 locked."""
-    if not read_rows(root / "topics.csv"):
+    try:
+        topics = read_rows(root / "topics.csv")
+        read_rows(root / "topics_done.csv")
+    except BadFile as e:
+        return 2, {"invalid": str(e), "message": f"❌ barrace did nothing today: {e}"}
+    if not topics:
         return 3, {"empty": True, "message": "barrace: topics.csv is empty, nothing to make today."}
     if not take_lock(root):
         return 4, {"locked": True}
@@ -296,9 +360,13 @@ def run_all(root: Path, today: date, steps=None, notify=send_telegram) -> int:
         return code
     d = Path(payload["dir"])
     for name, fn in (STEPS if steps is None else steps):
+        marker = d / f".ok-{name}"
+        if marker.exists():  # finished in an earlier, failed run of this folder
+            continue
         if run_step(name, d, lambda: fn(root, d)):
             notify(finish(root, d, "failed")["message"])
             return 1
+        marker.touch()
     notify(finish(root, d, "uploaded")["message"])
     return 0
 

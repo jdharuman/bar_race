@@ -100,6 +100,7 @@ def test_redo_copies_previous(tmp_path):
     (prev / "data.csv").write_text("year,name,value\n")
     (prev / "out" / "main.mp4").write_text("v")
     (prev / "upload.json").write_text("{}")
+    (prev / "research_notes.md").write_text("## Redo fixes\n- old\n")
     done = {**row(), "finished_at": "x", "folder": str(prev), "status": "uploaded",
             "main_video_id": "m", "short_video_id": "s", "error": ""}
     daily.write_rows(tmp_path / "topics_done.csv", daily.DONE_COLS, [done])
@@ -110,6 +111,8 @@ def test_redo_copies_previous(tmp_path):
     assert not (d / "out").exists()
     assert not (d / "upload.json").exists()
     assert out["redo_of"] == str(prev)
+    assert not (d / "research_notes.md").exists()
+    assert (d / "research_notes.prev.md").exists()
 
 
 def picked(tmp_path, rows):
@@ -168,6 +171,7 @@ class FakeRun:
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         self.cwds = getattr(self, "cwds", []) + [kw.get("cwd")]
+        self.envs = getattr(self, "envs", []) + [kw.get("env")]
         if self.on_call:
             self.on_call(cmd)
         code, out = self.results.pop(0)
@@ -283,3 +287,125 @@ def test_run_all_empty_list_notifies(tmp_path):
     sent = []
     assert daily.run_all(tmp_path, TODAY, steps=[], notify=sent.append) == 3
     assert "empty" in sent[0]
+
+
+def test_headerless_topics_not_wiped(tmp_path):
+    p = tmp_path / "topics.csv"
+    p.write_text("race,A,,\nrace,B,,\npillars,C,,\n")
+    sent = []
+    assert daily.run_all(tmp_path, TODAY, steps=[], notify=sent.append) == 2
+    assert p.read_text() == "race,A,,\nrace,B,,\npillars,C,,\n"
+    assert "header" in sent[0]
+    assert not (tmp_path / "videos" / ".lock").exists()
+
+
+def test_excel_bom_header_ok(tmp_path):
+    (tmp_path / "topics.csv").write_bytes("﻿style,title,youtube_url,comment\nrace,A,,\n".encode())
+    assert daily.read_rows(tmp_path / "topics.csv") == [row(title="A")]
+
+
+def test_retry_after_failed_upload_resumes_same_folder(tmp_path):
+    write_topics(tmp_path, [row()])
+    calls = []
+
+    def research(root, d):
+        calls.append("research")
+
+    def render(root, d):
+        calls.append("render")
+
+    def upload_main_then_fail(root, d):
+        (d / "upload.json").write_text(json.dumps({"main": "m1"}))
+        raise daily.StepError("token expired")
+    assert daily.run_all(tmp_path, TODAY, steps=[("research", research), ("render", render),
+                                                 ("upload", upload_main_then_fail)],
+                         notify=lambda m: None) == 1
+    first = daily.read_rows(tmp_path / "topics_done.csv")[0]["folder"]
+
+    write_topics(tmp_path, [row()])  # user puts the row back, no comment
+    calls.clear()
+
+    def upload_rest(root, d):
+        assert json.loads((d / "upload.json").read_text()) == {"main": "m1"}
+        (d / "upload.json").write_text(json.dumps({"main": "m1", "short": "s1"}))
+    assert daily.run_all(tmp_path, TODAY, steps=[("research", research), ("render", render),
+                                                 ("upload", upload_rest)],
+                         notify=lambda m: None) == 0
+    assert calls == []
+    done = daily.read_rows(tmp_path / "topics_done.csv")
+    assert done[-1]["folder"] == first and done[-1]["status"] == "uploaded"
+    assert not (Path(first) / "error.txt").exists()
+
+
+def redo_dir(tmp_path):
+    d = tmp_path / "v"
+    d.mkdir()
+    (d / "topic.json").write_text(json.dumps({"row": row(comment="India missing")}))
+    (d / "metadata.json").write_text("{}")
+    (d / "data.csv").write_text("x")
+    (d / "research_notes.md").write_text("# notes\n")
+    return d
+
+
+def test_redo_without_fix_notes_fails(tmp_path):
+    d = redo_dir(tmp_path)
+    run = FakeRun([(0, "{}"), (0, "ok")])
+    try:
+        daily.research(tmp_path, d, run=run, sleep=lambda s: None)
+        assert False, "expected StepError"
+    except daily.StepError as e:
+        assert "Redo fixes" in str(e)
+
+
+def test_redo_with_fix_notes_passes(tmp_path):
+    d = redo_dir(tmp_path)
+
+    def fix(cmd):
+        if cmd[0].endswith("claude"):
+            (d / "research_notes.md").write_text("# notes\n## Redo fixes\n- added India\n")
+    daily.research(tmp_path, d, run=FakeRun([(0, "{}"), (0, "ok")], fix), sleep=lambda s: None)
+
+
+def test_claude_cmd_scopes_writes_to_folder(tmp_path):
+    d = tmp_path / "videos" / "x"
+    cmd = daily.claude_cmd(d, tmp_path)
+    allowed = cmd[cmd.index("--allowedTools") + 1:cmd.index("--disallowedTools")]
+    assert "acceptEdits" not in cmd
+    assert "Write" not in allowed and "Edit" not in allowed
+    assert f"Write(/{d}/**)" in allowed and f"Edit(/{d}/**)" in allowed
+    denied = cmd[cmd.index("--disallowedTools") + 1:cmd.index("--output-format")]
+    assert any(".config/barrace" in t for t in denied)
+
+
+def test_research_env_has_no_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "secret")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+    d = tmp_path / "v"
+    d.mkdir()
+    run = FakeRun([(0, "{}")])
+    try:
+        daily.research(tmp_path, d, run=run, sleep=lambda s: None)
+    except daily.StepError:
+        pass
+    env = run.envs[0]
+    assert "TELEGRAM_BOT_TOKEN" not in env
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "tok"
+
+
+def test_research_fails_if_tool_files_changed(tmp_path):
+    (tmp_path / "automation").mkdir()
+    (tmp_path / "automation" / "youtube.py").write_text("private")
+    d = tmp_path / "v"
+    d.mkdir()
+
+    def tamper(cmd):
+        if cmd[0].endswith("claude"):
+            (tmp_path / "automation" / "youtube.py").write_text("public")
+            (d / "metadata.json").write_text("{}")
+            (d / "data.csv").write_text("x")
+    try:
+        daily.research(tmp_path, d, run=FakeRun([(0, "{}"), (0, "ok")], tamper),
+                       sleep=lambda s: None)
+        assert False, "expected StepError"
+    except daily.StepError as e:
+        assert "automation/youtube.py" in str(e)

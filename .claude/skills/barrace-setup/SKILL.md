@@ -121,7 +121,6 @@ by default). `N8N_SECURE_COOKIE=false` lets the user open the UI over a plain
 ```ini
 [Unit]
 Description=n8n (barrace daily video)
-After=network-online.target
 
 [Service]
 EnvironmentFile=/home/<user>/.config/barrace/env
@@ -142,27 +141,30 @@ systemctl --user status n8n --no-pager
 
 ## 10. Import and turn on the workflow
 
+Tested with n8n 2.48. Run with the env file loaded: without
+`NODES_EXCLUDE=[]`, n8n reports `Unrecognized node type: n8n-nodes-base.executeCommand`.
+
 ```bash
 systemctl --user stop n8n
 set -a; . ~/.config/barrace/env; set +a
 n8n import:workflow --input=$REPO/n8n/daily-video.json
-n8n list:workflow                      # note the id of "barrace daily video"
+ID=$(n8n list:workflow | grep "barrace daily video" | cut -d"|" -f1)
+n8n publish:workflow --id=$ID          # older 1.x: n8n update:workflow --id=$ID --active=true
+n8n list:workflow --active=true        # must list "barrace daily video"
 systemctl --user start n8n
 ```
 
-The user opens the UI through a tunnel (`ssh -L 5678:localhost:5678 …`, then
-http://localhost:5678) and creates the owner account on first visit. They
-open "barrace daily video", check that the schedule node says 02:00, and
-switch the workflow **Active**/**Publish** (the toggle at the top right). The
-CLI can do this as well: look in `n8n --help` for the activate or publish command
-your n8n version has.
+For the UI (run history, "Execute workflow" button), the user opens a tunnel
+(`ssh -L 5678:localhost:5678 …`), goes to http://localhost:5678, and creates the
+owner account on first visit.
 
 ## 11. Dry run
 
 1. `cp $REPO/topics.example.csv $REPO/topics.csv` (if the user has no list yet),
    or ask them to copy theirs in.
-2. In the n8n UI, open the workflow and click **Execute workflow**. Or run
-   `cd $REPO && uv run --project automation automation/daily.py run`.
+2. In the n8n UI, open the workflow and click **Execute workflow**. Or run it from a shell with the env file loaded, so the Claude token and
+   Telegram settings apply:
+   `cd $REPO && set -a && . ~/.config/barrace/env && set +a && uv run --project automation automation/daily.py run`.
    It takes 20–60 min.
 3. Expect a Telegram message with two Studio links. Open them: both videos
    private, title, description, thumbnail set. Check `topics_done.csv`.
