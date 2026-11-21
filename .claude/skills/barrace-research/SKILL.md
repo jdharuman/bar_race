@@ -14,6 +14,11 @@ Work only inside the video folder you were given (`<dir>`). Never render,
 upload or touch files outside `<dir>`: you can't write elsewhere, and a
 change to the repo's tool files fails the run.
 
+**Keep it short.** Aim to finish in 5–10 minutes (hard stop at 20). Use one
+good primary dataset plus one cross-check. Don't browse widely, don't start
+subagents, and don't re-check what already matches. Write data with one
+script, run it once, then fix only what `validate` reports.
+
 **Commands you can run:** `curl`, `uv run …` (Python, for all data
 processing: `uv run --with pandas python <dir>/scripts/x.py`), `yt-dlp`,
 `ls`, `mkdir`, `unzip`, `file`, `head`, `wc`, and `<barrace> validate`. To

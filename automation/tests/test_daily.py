@@ -178,10 +178,10 @@ class FakeRun:
         return subprocess.CompletedProcess(cmd, code, out, "")
 
 
-def test_claude_cmd_uses_opus_and_skill(tmp_path):
+def test_claude_cmd_uses_sonnet_and_skill(tmp_path):
     cmd = daily.claude_cmd(tmp_path / "videos" / "x", tmp_path)
     assert cmd[:2] == ["claude", "-p"]
-    assert cmd[cmd.index("--model") + 1] == "opus"
+    assert cmd[cmd.index("--model") + 1] == "sonnet"
     assert "barrace-research/SKILL.md" in cmd[2]
     assert str(tmp_path / "videos" / "x") in cmd[2]
 
@@ -409,3 +409,7 @@ def test_research_fails_if_tool_files_changed(tmp_path):
         assert False, "expected StepError"
     except daily.StepError as e:
         assert "automation/youtube.py" in str(e)
+
+
+def test_research_time_limit_20_min():
+    assert daily.RESEARCH_TIMEOUT_S == 20 * 60

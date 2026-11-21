@@ -173,7 +173,7 @@ steps documented in the same repo" for Claude to set up on another machine.
   the research step after 30 minutes for usage-limit errors.
 - **Notification:** Telegram bot (token + chat id in n8n credentials); free
   and phone-friendly. Email can replace it later.
-- **Research time limit:** 45 minutes per run.
+- **Research time limit:** 20 minutes per run (user: AI only for research, keep usage low).
 - **Concurrency:** one run at a time (lock file); a run that finds the lock
   exits without touching the list.
 - **Metadata language:** English.
@@ -193,7 +193,7 @@ steps documented in the same repo" for Claude to set up on another machine.
   author and licence in `research_notes.md`. No free photo → no image
   (initials tile). Flags: public-domain sources. The README's "the tool never
   downloads images" line changes to describe this rule.
-- **Model (user is on Max):** research runs with Opus, 45-minute limit.
+- **Model:** Sonnet (user wants low usage; AI is only for research and data creation).
 - **`weeks/`** stays as is; the manual flow stays documented in the README.
   Redo matching looks only in `topics_done.csv` / `videos/`.
 

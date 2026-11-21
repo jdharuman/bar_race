@@ -173,7 +173,7 @@ def pick(root: Path, today: date) -> dict:
             "youtube_url": row["youtube_url"], "redo_of": topic["redo_of"]}
 
 
-RESEARCH_TIMEOUT_S = 45 * 60
+RESEARCH_TIMEOUT_S = 20 * 60
 LIMIT_RETRY_S = 30 * 60
 
 
@@ -193,7 +193,7 @@ def claude_cmd(d: Path, root: Path) -> list[str]:
              f"Bash({bb} validate:*)", "Bash(ls:*)", "Bash(mkdir:*)", "Bash(unzip:*)",
              "Bash(file:*)", "Bash(head:*)", "Bash(wc:*)"]
     denied = ["Read(~/.config/barrace/**)", "Read(~/.ssh/**)", "Bash(yt-dlp --exec:*)"]
-    return [os.environ.get("CLAUDE_BIN", "claude"), "-p", prompt, "--model", "opus",
+    return [os.environ.get("CLAUDE_BIN", "claude"), "-p", prompt, "--model", "sonnet",
             "--allowedTools", *tools, "--disallowedTools", *denied,
             "--output-format", "json"]
 

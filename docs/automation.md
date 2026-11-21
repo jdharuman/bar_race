@@ -88,5 +88,5 @@ A step that fails writes `videos/<dir>/error.txt`. Claude's full output is in
   uploaded video is locked private and *can't* be made public, even by hand.
   Apply at setup time (link in the setup skill).
 - **Thumbnails** need a phone-verified channel.
-- Research uses your Claude subscription (Opus, up to 45 min per run) and
+- Research uses your Claude subscription (Sonnet, usually 5–10 min, hard limit 20 min) and
   shares its usage limits with your own Claude use.
