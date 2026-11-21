@@ -28,7 +28,7 @@ impl Camera {
         let (dist, eye_y) = (5.5, 1.1);
         let (focal, base_y) = if portrait {
             // ~3 pillars across: screen spacing = width / 3.2
-            (w / 3.2 * dist / SPACING, 0.70 * h)
+            (w / 3.2 * dist / SPACING, 0.80 * h)
         } else {
             // tallest local pillar + photo spans 0.82 of the height
             (0.82 * h * dist / (TARGET_H + PHOTO_H), 0.88 * h)

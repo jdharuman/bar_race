@@ -14,6 +14,7 @@ mod timeline;
 #[cfg(test)]
 mod testutil;
 mod validate;
+mod walk;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
