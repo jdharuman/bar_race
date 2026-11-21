@@ -121,6 +121,64 @@ impl Timeline {
     }
 }
 
+/// Timeline for the pillar walk. `Phase::Race { t }` carries the focus position:
+/// a fractional row index from `first` to `first + n − 1`.
+#[derive(Debug, Clone)]
+pub struct PillarTimeline {
+    pub fps: u32,
+    pub first: usize,
+    pub n: usize,
+    pub intro: f64,
+    pub walk: f64,
+    pub hold: f64,
+    pub outro: f64,
+}
+
+impl PillarTimeline {
+    const SHORT_FLOOR: f64 = 0.8;
+
+    pub fn new(fmt: Format, cfg: &VideoConfig, rows: usize, fps: u32) -> PillarTimeline {
+        let rows = rows.max(1);
+        let (intro, hold, outro) = match fmt {
+            Format::Main => (3.0, 2.0, 5.0),
+            Format::Short => (1.5, 1.0, 2.5),
+        };
+        let (first, n, walk) = match fmt {
+            Format::Main => (0, rows, rows as f64 * cfg.seconds_per_pillar),
+            Format::Short => {
+                let walk = cfg.short_seconds - intro - hold - outro;
+                let n = if walk / (rows as f64) < Self::SHORT_FLOOR { ((walk / Self::SHORT_FLOOR).floor() as usize).max(1) } else { rows };
+                (rows - n, n, walk)
+            }
+        };
+        PillarTimeline { fps, first, n, intro, walk, hold, outro }
+    }
+
+    pub fn total_seconds(&self) -> f64 {
+        self.intro + self.walk + self.hold + self.outro
+    }
+
+    pub fn frame_count(&self) -> u64 {
+        (self.total_seconds() * self.fps as f64).round() as u64
+    }
+
+    pub fn phase_at(&self, frame: u64) -> Phase {
+        let s = frame as f64 / self.fps as f64;
+        if s < self.intro {
+            return Phase::Intro { t: s / self.intro };
+        }
+        let s = s - self.intro;
+        if s < self.walk {
+            let u = crate::camera::ease_walk(s / self.walk);
+            return Phase::Race { t: self.first as f64 + u * (self.n - 1) as f64 };
+        }
+        if s - self.walk < self.hold {
+            return Phase::Hold;
+        }
+        Phase::End { t: ((s - self.walk - self.hold) / self.outro).min(1.0) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,6 +310,57 @@ mod tests {
                 if let Phase::Race { t: y } = t.phase_at(f) {
                     assert_eq!(y, 2000.0);
                 }
+            }
+        }
+    }
+
+    fn race_p(t: &PillarTimeline, f: u64) -> f64 {
+        match t.phase_at(f) {
+            Phase::Race { t } => t,
+            p => panic!("{p:?}"),
+        }
+    }
+
+    #[test]
+    fn pillar_main_duration() {
+        let t = PillarTimeline::new(Format::Main, &VideoConfig::default(), 60, 60);
+        assert!((t.walk - 150.0).abs() < 1e-9);
+        assert!((t.total_seconds() - 160.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pillar_short_scales() {
+        let t = PillarTimeline::new(Format::Short, &VideoConfig::default(), 20, 60);
+        assert!((t.walk - 53.0).abs() < 1e-9);
+        assert_eq!((t.first, t.n), (0, 20));
+        assert!((t.total_seconds() - 58.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pillar_short_keeps_last_rows() {
+        let t = PillarTimeline::new(Format::Short, &VideoConfig::default(), 100, 60);
+        assert_eq!((t.first, t.n), (34, 66));
+    }
+
+    #[test]
+    fn pillar_phases() {
+        let cfg = VideoConfig { seconds_per_pillar: 0.5, ..Default::default() };
+        let t = PillarTimeline::new(Format::Main, &cfg, 4, 30);
+        let first = (t.intro * 30.0).round() as u64;
+        assert_eq!(race_p(&t, first), 0.0);
+        let last = ((t.intro + t.walk) * 30.0).round() as u64 - 1;
+        assert!((race_p(&t, last) - 3.0).abs() < 0.01, "{}", race_p(&t, last));
+        assert!(matches!(t.phase_at(last + 1), Phase::Hold));
+        assert!(matches!(t.phase_at(t.frame_count() - 1), Phase::End { t } if t > 0.98));
+    }
+
+    #[test]
+    fn single_row_is_static() {
+        let t = PillarTimeline::new(Format::Main, &VideoConfig::default(), 1, 30);
+        assert_eq!(t.walk, 2.5);
+        for f in 0..t.frame_count() {
+            if let Phase::Race { t: p } = t.phase_at(f) {
+                assert_eq!(p, 0.0);
             }
         }
     }
