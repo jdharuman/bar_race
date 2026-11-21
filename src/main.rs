@@ -5,6 +5,7 @@ mod encode;
 mod events;
 mod fmt;
 mod layout;
+mod pillars;
 mod render;
 mod scene;
 mod text;
@@ -80,7 +81,11 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Cmd::Validate { dir } => {
             let r = validate::run(&dir)?;
             println!("items: {}", r.items);
-            println!("time: {}–{}", fmt::format_time(r.first, r.granularity), fmt::format_time(r.last, r.granularity));
+            if r.style == config::Style::Pillars {
+                println!("pillars: {}", r.items);
+            } else {
+                println!("time: {}–{}", fmt::format_time(r.first, r.granularity), fmt::format_time(r.last, r.granularity));
+            }
             println!("estimated: {:.1}%", r.estimated_share * 100.0);
             println!("reviewed: {}", if r.reviewed { "yes" } else { "no" });
             for w in &r.warnings {

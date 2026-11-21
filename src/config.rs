@@ -26,6 +26,10 @@ pub struct VideoConfig {
     pub short_seconds: f64,
     pub music: Option<PathBuf>,
     pub number_style: crate::fmt::NumberStyle,
+    pub style: Style,
+    pub seconds_per_pillar: f64,
+    pub pillar_color: String,
+    pub pillar_colors: PillarColors,
     pub bar_colors: BarColors,
     pub reviewed: bool,
     pub colors: BTreeMap<String, String>,
@@ -45,6 +49,10 @@ impl Default for VideoConfig {
             short_seconds: 58.0,
             music: None,
             number_style: Default::default(),
+            style: Style::Race,
+            seconds_per_pillar: 2.5,
+            pillar_color: "#d9822b".into(),
+            pillar_colors: PillarColors::Single,
             bar_colors: Default::default(),
             reviewed: false,
             colors: BTreeMap::new(),
@@ -68,6 +76,13 @@ impl VideoConfig {
         }
         if !(8.0..=180.0).contains(&self.short_seconds) {
             p.push(format!("short_seconds must be 8–180 (got {})", self.short_seconds));
+        }
+        if !(self.seconds_per_pillar > 0.0 && self.seconds_per_pillar <= 30.0) {
+            p.push(format!("seconds_per_pillar must be > 0 and ≤ 30 (got {})", self.seconds_per_pillar));
+        }
+        let hex6 = |s: &str| s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit());
+        if !hex6(&self.pillar_color) {
+            p.push(format!("pillar_color must look like #d9822b (got {})", self.pillar_color));
         }
         let mut secs: Vec<&PaceSection> = self.pace.iter().collect();
         secs.sort_by(|a, b| a.from.total_cmp(&b.from));
@@ -96,6 +111,28 @@ impl VideoConfig {
         }
         Ok(cfg)
     }
+}
+
+/// Which kind of video a week folder makes.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Style {
+    /// Bar chart race (data.csv).
+    #[default]
+    Race,
+    /// 3D pillar walk (pillars.csv).
+    Pillars,
+}
+
+/// Pillar colour source in the pillar walk.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PillarColors {
+    /// One colour for every pillar: `pillar_color`.
+    #[default]
+    Single,
+    /// Each pillar's image dominant colour, else `pillar_color`.
+    Image,
 }
 
 /// Where bar colours come from.
@@ -204,5 +241,24 @@ mod tests {
         let c: VideoConfig = toml::from_str("[[pace]]\nfrom = 1600\nto = 1800\nseconds_per_year = 0.45\n").unwrap();
         assert_eq!(c.pace[0].from, 1600.0);
         assert_eq!(c.seconds_per_year, None);
+    }
+
+    #[test]
+    fn style_defaults_and_parse() {
+        let d = VideoConfig::default();
+        assert_eq!(d.style, Style::Race);
+        assert_eq!(d.seconds_per_pillar, 2.5);
+        assert_eq!(d.pillar_color, "#d9822b");
+        assert_eq!(d.pillar_colors, PillarColors::Single);
+        let c: VideoConfig = toml::from_str("style = \"pillars\"\npillar_colors = \"image\"").unwrap();
+        assert_eq!(c.style, Style::Pillars);
+        assert_eq!(c.pillar_colors, PillarColors::Image);
+    }
+
+    #[test]
+    fn bad_pillar_settings() {
+        let c = VideoConfig { seconds_per_pillar: 0.0, pillar_color: "orange".into(), ..Default::default() };
+        let p = c.problems().join(" ");
+        assert!(p.contains("seconds_per_pillar") && p.contains("pillar_color"), "{p}");
     }
 }

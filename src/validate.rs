@@ -1,4 +1,4 @@
-use crate::config::VideoConfig;
+use crate::config::{Style, VideoConfig};
 use crate::data::{parse, Dataset};
 use anyhow::Result;
 use std::path::Path;
@@ -13,19 +13,22 @@ pub struct Report {
     pub granularity: crate::data::Granularity,
     pub estimated_share: f64,
     pub reviewed: bool,
+    pub style: Style,
 }
 
 pub fn run(week_dir: &Path) -> Result<Report> {
-    let (items, mut errors, g) = parse(week_dir)?;
-    let mut warnings = Vec::new();
     // ponytail: load() also range-checks, so bad ranges surface here as one video.toml error
-    let reviewed = match VideoConfig::load(&week_dir.join("video.toml")) {
-        Ok(c) => c.reviewed,
-        Err(e) => {
-            errors.push(format!("video.toml: {e:#}"));
-            false
-        }
+    let (cfg, cfg_err) = match VideoConfig::load(&week_dir.join("video.toml")) {
+        Ok(c) => (Some(c), None),
+        Err(e) => (None, Some(format!("video.toml: {e:#}"))),
     };
+    if cfg.as_ref().is_some_and(|c| c.style == Style::Pillars) {
+        return run_pillars(week_dir, cfg.unwrap());
+    }
+    let reviewed = cfg.as_ref().is_some_and(|c| c.reviewed);
+    let (items, mut errors, g) = parse(week_dir)?;
+    errors.extend(cfg_err);
+    let mut warnings = Vec::new();
     match crate::events::parse(week_dir) {
         Ok((_, ev_errors)) => errors.extend(ev_errors),
         Err(e) => errors.push(format!("events.csv: {e:#}")),
@@ -52,6 +55,33 @@ pub fn run(week_dir: &Path) -> Result<Report> {
         granularity: ds.granularity,
         estimated_share: ds.estimated_share(),
         reviewed,
+        style: Style::Race,
+    })
+}
+
+fn run_pillars(week_dir: &Path, cfg: VideoConfig) -> Result<Report> {
+    let (rows, errors) = crate::pillars::parse(week_dir)?;
+    let mut warnings = Vec::new();
+    if !cfg.reviewed {
+        warnings.push("reviewed = false: check pillars.csv, then set reviewed = true in video.toml".into());
+    }
+    if cfg.top_n != VideoConfig::default().top_n {
+        warnings.push("top_n is ignored for style = \"pillars\"".into());
+    }
+    if !cfg.pace.is_empty() {
+        warnings.push("[[pace]] is ignored for style = \"pillars\" (use seconds_per_pillar)".into());
+    }
+    let est = rows.iter().filter(|r| r.estimated).count();
+    Ok(Report {
+        errors,
+        warnings,
+        items: rows.len(),
+        first: 0.0,
+        last: 0.0,
+        granularity: crate::data::Granularity::Year,
+        estimated_share: if rows.is_empty() { 0.0 } else { est as f64 / rows.len() as f64 },
+        reviewed: cfg.reviewed,
+        style: Style::Pillars,
     })
 }
 
@@ -89,5 +119,16 @@ mod tests {
         assert!(r.reviewed);
         assert_eq!(r.items, 4);
         assert!(r.estimated_share > 0.0 && r.estimated_share < 1.0);
+    }
+
+    #[test]
+    fn validate_pillars_week() {
+        let dir = crate::testutil::temp_week("name\n");
+        std::fs::write(dir.join("pillars.csv"), "label,name,value\n1,A,5\n2,B,7\n").unwrap();
+        std::fs::write(dir.join("video.toml"), "title = \"T\"\nstyle = \"pillars\"\ntop_n = 12\nreviewed = true\n").unwrap();
+        let r = run(&dir).unwrap();
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(r.items, 2);
+        assert!(r.warnings.iter().any(|w| w.contains("top_n")), "{:?}", r.warnings);
     }
 }
