@@ -6,29 +6,30 @@ const ALPHA_TAU: f64 = 0.15;
 
 /// Interpolated value of `item` at fractional `year`, plus whether it leans on an estimate.
 /// Ramps from 0 over the year before the first point and back to 0 over the year after the last.
-pub fn value_at(item: &Item, year: f64) -> Option<(f64, bool)> {
-    if !year.is_finite() {
+/// The ramp before the first point and after the last spans one data `step` (in years).
+pub fn value_at(item: &Item, t: f64, step: f64) -> Option<(f64, bool)> {
+    if !t.is_finite() {
         return None;
     }
     let pts = &item.points;
     let (first, last) = (pts.first()?, pts.last()?);
-    let (fy, ly) = (first.year as f64, last.year as f64);
-    if year <= fy - 1.0 || year >= ly + 1.0 {
+    let (ft, lt) = (first.t, last.t);
+    if t <= ft - step || t >= lt + step {
         return None;
     }
-    if year < fy {
-        return Some((first.value * (year - (fy - 1.0)), first.estimated));
+    if t < ft {
+        return Some((first.value * (t - (ft - step)) / step, first.estimated));
     }
-    if year > ly {
-        return Some((last.value * (ly + 1.0 - year), last.estimated));
+    if t > lt {
+        return Some((last.value * (lt + step - t) / step, last.estimated));
     }
-    let i = pts.partition_point(|p| (p.year as f64) <= year);
+    let i = pts.partition_point(|p| p.t <= t);
     if i == pts.len() {
         return Some((last.value, last.estimated));
     }
     let (a, b) = (&pts[i - 1], &pts[i]);
-    let t = (year - a.year as f64) / (b.year - a.year) as f64;
-    Some((a.value + (b.value - a.value) * t, a.estimated || b.estimated))
+    let u = (t - a.t) / (b.t - a.t);
+    Some((a.value + (b.value - a.value) * u, a.estimated || b.estimated))
 }
 
 #[derive(Debug, Clone)]
@@ -42,9 +43,41 @@ pub struct BarState {
 
 #[derive(Debug, Clone)]
 pub struct FrameState {
-    pub year: f64,
+    pub t: f64,
     pub bars: Vec<BarState>,
     pub axis_max: f64,
+    /// Rank-1 item at this time, if any.
+    pub leader: Option<usize>,
+}
+
+/// Shows one item at a time; switching fades the old one out fully, then the new one in.
+pub struct Crossfade {
+    half: f64,
+    shown: Option<usize>,
+    alpha: f64,
+}
+
+impl Crossfade {
+    /// `fade` = total switch time in seconds (half out, half in).
+    pub fn new(fade: f64) -> Crossfade {
+        Crossfade { half: fade / 2.0, shown: None, alpha: 0.0 }
+    }
+
+    pub fn step(&mut self, target: Option<usize>, dt: f64) -> Option<(usize, f32)> {
+        let d = dt / self.half;
+        if self.shown == target {
+            self.alpha = (self.alpha + d).min(1.0);
+        } else if self.shown.is_some() && self.alpha > 0.0 {
+            self.alpha = (self.alpha - d).max(0.0);
+            if self.alpha == 0.0 {
+                self.shown = target;
+            }
+        } else {
+            self.shown = target;
+            self.alpha = 0.0;
+        }
+        self.shown.filter(|_| self.alpha > 0.0).map(|i| (i, self.alpha as f32))
+    }
 }
 
 pub struct RankTracker {
@@ -70,8 +103,9 @@ impl RankTracker {
         }
     }
 
-    pub fn step(&mut self, ds: &Dataset, year: f64, dt: f64) -> FrameState {
-        let vals: Vec<Option<(f64, bool)>> = ds.items.iter().map(|it| value_at(it, year)).collect();
+    pub fn step(&mut self, ds: &Dataset, t: f64, dt: f64) -> FrameState {
+        let step = ds.step();
+        let vals: Vec<Option<(f64, bool)>> = ds.items.iter().map(|it| value_at(it, t, step)).collect();
         let mut order: Vec<usize> = (0..ds.items.len()).filter(|&i| vals[i].is_some()).collect();
         order.sort_by(|&a, &b| {
             let (va, vb) = (vals[a].unwrap().0, vals[b].unwrap().0);
@@ -104,7 +138,7 @@ impl RankTracker {
             })
             .collect();
         bars.sort_by(|a, b| a.slot.total_cmp(&b.slot));
-        FrameState { year, bars, axis_max: self.axis_max }
+        FrameState { t, bars, axis_max: self.axis_max, leader: order.first().copied() }
     }
 }
 
@@ -118,7 +152,7 @@ mod tests {
             name: name.into(),
             category: "X".into(),
             image: None,
-            points: pts.iter().map(|&(year, value, estimated)| Point { year, value, estimated }).collect(),
+            points: pts.iter().map(|&(year, value, estimated)| Point { t: year as f64, value, estimated }).collect(),
             sources: vec![],
         }
     }
@@ -126,35 +160,35 @@ mod tests {
     #[test]
     fn interpolates_linearly() {
         let a = item("A", &[(2000, 10.0, false), (2001, 20.0, false)]);
-        assert_eq!(value_at(&a, 2000.5), Some((15.0, false)));
+        assert_eq!(value_at(&a, 2000.5, 1.0), Some((15.0, false)));
     }
 
     #[test]
     fn ramps_in_and_out() {
         let d = item("D", &[(2002, 8.0, false)]);
-        assert_eq!(value_at(&d, 2001.5).map(|v| v.0), Some(4.0));
-        assert_eq!(value_at(&d, 2002.5).map(|v| v.0), Some(4.0));
-        assert_eq!(value_at(&d, 2000.9), None);
-        assert_eq!(value_at(&d, 2003.1), None);
+        assert_eq!(value_at(&d, 2001.5, 1.0).map(|v| v.0), Some(4.0));
+        assert_eq!(value_at(&d, 2002.5, 1.0).map(|v| v.0), Some(4.0));
+        assert_eq!(value_at(&d, 2000.9, 1.0), None);
+        assert_eq!(value_at(&d, 2003.1, 1.0), None);
     }
 
     #[test]
     fn ramp_endpoints_are_absent() {
         let d = item("D", &[(2002, 8.0, false)]);
-        assert_eq!(value_at(&d, 2001.0), None);
-        assert_eq!(value_at(&d, 2003.0), None);
+        assert_eq!(value_at(&d, 2001.0, 1.0), None);
+        assert_eq!(value_at(&d, 2003.0, 1.0), None);
     }
 
     #[test]
     fn gap_interpolated_across() {
         let a = item("A", &[(2000, 0.0, false), (2003, 30.0, false)]);
-        assert_eq!(value_at(&a, 2001.0).map(|v| v.0), Some(10.0));
+        assert_eq!(value_at(&a, 2001.0, 1.0).map(|v| v.0), Some(10.0));
     }
 
     #[test]
     fn estimated_propagates() {
         let b = item("B", &[(2000, 1.0, false), (2001, 2.0, true)]);
-        assert_eq!(value_at(&b, 2000.5).map(|v| v.1), Some(true));
+        assert_eq!(value_at(&b, 2000.5, 1.0).map(|v| v.1), Some(true));
     }
 
     fn slots_order(fs: &FrameState, ds: &Dataset) -> Vec<String> {
@@ -230,7 +264,61 @@ mod tests {
     #[test]
     fn non_finite_year_is_absent() {
         let a = item("A", &[(2000, 1.0, false), (2001, 2.0, false)]);
-        assert_eq!(value_at(&a, f64::NAN), None);
-        assert_eq!(value_at(&a, f64::INFINITY), None);
+        assert_eq!(value_at(&a, f64::NAN, 1.0), None);
+        assert_eq!(value_at(&a, f64::INFINITY, 1.0), None);
+    }
+
+    #[test]
+    fn monthly_ramp_is_one_month() {
+        let m = 1.0 / 12.0;
+        let june = 2000.0 + 5.0 * m;
+        let it = Item { name: "A".into(), category: "X".into(), image: None, points: vec![Point { t: june, value: 12.0, estimated: false }], sources: vec![] };
+        assert!((value_at(&it, june - m / 2.0, m).unwrap().0 - 6.0).abs() < 1e-9);
+        assert_eq!(value_at(&it, june - m, m), None);
+        assert_eq!(value_at(&it, june + m, m), None);
+    }
+
+    #[test]
+    fn crossfade_switches_through_zero() {
+        let mut c = Crossfade::new(0.4);
+        let dt = 1.0 / 60.0;
+        let mut last = None;
+        for _ in 0..60 {
+            last = c.step(Some(0), dt);
+        }
+        assert_eq!(last, Some((0, 1.0)));
+        let mut saw_one = false;
+        for _ in 0..60 {
+            match c.step(Some(1), dt) {
+                Some((1, _)) => saw_one = true,
+                Some((0, a)) => assert!(!saw_one && a < 1.0),
+                None => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(saw_one);
+        assert_eq!(c.step(Some(1), dt), Some((1, 1.0)));
+        for _ in 0..60 {
+            c.step(None, dt);
+        }
+        assert_eq!(c.step(None, dt), None);
+    }
+
+    #[test]
+    fn crossfade_flip_flop_no_double() {
+        let mut c = Crossfade::new(0.4);
+        for f in 0..120 {
+            if let Some((_, a)) = c.step(Some(f % 2), 1.0 / 60.0) {
+                assert!((0.0..=1.0).contains(&a));
+            }
+        }
+    }
+
+    #[test]
+    fn leader_is_top_rank() {
+        let ds = crate::data::Dataset::load(std::path::Path::new("tests/fixtures/week")).unwrap();
+        let mut t = RankTracker::new(ds.items.len(), 10);
+        let fs = t.step(&ds, 2001.0, 1.0 / 60.0);
+        assert_eq!(fs.leader.map(|i| ds.items[i].name.as_str()), Some("Beta"));
     }
 }

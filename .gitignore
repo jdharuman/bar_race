@@ -1,3 +1,5 @@
 /target
 weeks/*/out/
 tests/fixtures/week/out/
+
+/tests/fixtures/pillars/out/

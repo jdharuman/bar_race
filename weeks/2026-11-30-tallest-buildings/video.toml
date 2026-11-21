@@ -1,0 +1,6 @@
+title = "Tallest Building in the World"
+subtitle = "Record holders by year completed (height in metres)"
+style = "pillars"
+unit_suffix = " m"
+seconds_per_pillar = 3.0
+reviewed = true
