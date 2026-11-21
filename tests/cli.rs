@@ -124,3 +124,46 @@ fn thumb_png_1280x720() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(image::image_dimensions(dir.join("out/thumb.png")).unwrap(), (1280, 720));
 }
+
+fn sine(path: &Path) {
+    let st = Command::new("ffmpeg")
+        .args(["-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=330:d=3"])
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(st.success());
+}
+
+#[test]
+fn short_bars_option_out_of_range() {
+    let dir = temp_fixture(None);
+    let out = run_in(&dir, &["render", ".", "--format", "short", "--short-bars", "0", "--preview"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("1–20"), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn music_flag_overrides() {
+    let dir = temp_fixture(None);
+    sine(&dir.join("mine.mp3"));
+    let out = run_in(&dir, &["render", ".", "--preview", "--music", "mine.mp3"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(probe(&dir.join("out/main.mp4")).4, "no audio");
+}
+
+#[test]
+fn no_music_flag_silent() {
+    let dir = temp_fixture(None);
+    std::fs::create_dir_all(dir.join("music")).unwrap();
+    sine(&dir.join("music/t.mp3"));
+    let out = run_in(&dir, &["render", ".", "--preview", "--no-music"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!probe(&dir.join("out/main.mp4")).4, "should be silent");
+}
+
+#[test]
+fn music_and_no_music_conflict() {
+    let dir = temp_fixture(None);
+    let out = run_in(&dir, &["render", ".", "--music", "x.mp3", "--no-music"]);
+    assert!(!out.status.success());
+}

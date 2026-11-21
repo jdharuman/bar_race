@@ -39,7 +39,7 @@ impl Default for VideoConfig {
             unit_prefix: String::new(),
             unit_suffix: String::new(),
             top_n: 10,
-            top_n_short: 8,
+            top_n_short: 12,
             seconds_per_year: None,
             pace: Vec::new(),
             short_seconds: 58.0,
