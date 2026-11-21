@@ -203,6 +203,24 @@ impl Painter {
         self.last_strings.push(s.to_string());
     }
 
+    /// Draw only the intro or end-card overlay onto an existing frame (no clear).
+    pub fn paint_card(&mut self, pm: &mut Pixmap, phase: &Phase) {
+        self.last_strings.clear();
+        match *phase {
+            Phase::Intro { t } => self.paint_intro(pm, t),
+            Phase::End { t } => self.paint_end(pm, t),
+            Phase::Race { .. } | Phase::Hold => {}
+        }
+    }
+
+    /// Big centred title in the header area (thumbnails).
+    pub fn paint_title_overlay(&mut self, pm: &mut Pixmap, color: Color) {
+        let l = self.layout.clone();
+        let title = self.cfg.title.clone();
+        let size = self.fit_size(&title, l.title_size * 2.2, true, l.width as f32 * 0.92);
+        self.txt(pm, &title, l.width as f32 / 2.0, l.chart_top * 0.45, size, true, color, Align::Center);
+    }
+
     pub fn set_events(&mut self, events: Vec<Event>) {
         self.events = events;
     }
@@ -1145,5 +1163,19 @@ mod tests {
             px.red() < 235
         });
         assert!(darker, "white flag edge invisible on white background");
+    }
+
+    #[test]
+    fn paint_card_leaves_race_untouched() {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let mut p = painter(&ds);
+        let (w, h) = (p.layout().width, p.layout().height);
+        let mut pm = Pixmap::new(w, h).unwrap();
+        pm.fill(Color::from_rgba8(10, 200, 30, 255));
+        let before = pm.clone();
+        p.paint_card(&mut pm, &Phase::Race { t: 2001.0 });
+        assert!(pm == before, "race phase must not draw");
+        p.paint_card(&mut pm, &Phase::End { t: 0.5 });
+        assert!(p.last_strings.iter().any(|s| s == "SUBSCRIBE"), "{:?}", p.last_strings);
     }
 }

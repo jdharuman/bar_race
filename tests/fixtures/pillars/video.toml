@@ -1,0 +1,5 @@
+title = "Pillar Test"
+style = "pillars"
+unit_prefix = "$"
+seconds_per_pillar = 0.5
+reviewed = true

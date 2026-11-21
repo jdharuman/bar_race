@@ -167,3 +167,58 @@ fn music_and_no_music_conflict() {
     let out = run_in(&dir, &["render", ".", "--music", "x.mp3", "--no-music"]);
     assert!(!out.status.success());
 }
+
+fn pillar_fixture(video_toml: Option<&str>, csv: Option<&str>) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("barrace-pil-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv = csv.map(str::to_string).unwrap_or_else(|| std::fs::read_to_string("tests/fixtures/pillars/pillars.csv").unwrap());
+    std::fs::write(dir.join("pillars.csv"), csv).unwrap();
+    let toml = video_toml.map(str::to_string).unwrap_or_else(|| std::fs::read_to_string("tests/fixtures/pillars/video.toml").unwrap());
+    std::fs::write(dir.join("video.toml"), toml).unwrap();
+    dir
+}
+
+#[test]
+fn render_pillars_preview() {
+    let dir = pillar_fixture(None, None);
+    let out = run_in(&dir, &["render", ".", "--preview"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let (w, h, _, dur, _) = probe(&dir.join("out/main.mp4"));
+    assert_eq!((w, h), (960, 540));
+    assert!((dur - 12.0).abs() < 0.1, "duration {dur}");
+}
+
+#[test]
+fn render_pillars_short() {
+    let toml = "title = \"P\"\nstyle = \"pillars\"\nshort_seconds = 10\nreviewed = true\n";
+    let dir = pillar_fixture(Some(toml), None);
+    let out = run_in(&dir, &["render", ".", "--format", "short", "--preview"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let (w, h, _, dur, _) = probe(&dir.join("out/short.mp4"));
+    assert_eq!((w, h), (540, 960));
+    assert!((dur - 10.0).abs() < 0.1, "duration {dur}");
+}
+
+#[test]
+fn pillars_thumb() {
+    let dir = pillar_fixture(None, None);
+    let out = run_in(&dir, &["thumb", "."]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(image::image_dimensions(dir.join("out/thumb.png")).unwrap(), (1280, 720));
+}
+
+#[test]
+fn pillars_single_row_renders() {
+    let dir = pillar_fixture(None, Some("label,name,value\n2000,Solo,5\n"));
+    let out = run_in(&dir, &["render", ".", "--preview"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn pillars_refuses_unreviewed() {
+    let dir = pillar_fixture(Some("title = \"P\"\nstyle = \"pillars\"\nreviewed = false\n"), None);
+    let out = run_in(&dir, &["render", ".", "--preview"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("reviewed"));
+}

@@ -86,6 +86,23 @@ pub fn load(week_dir: &Path) -> Result<Vec<Pillar>> {
     Ok(rows)
 }
 
+/// Rows as a Dataset (one point each), so the bar-race cards can list sources
+/// and the estimated share.
+pub fn to_dataset(rows: &[Pillar]) -> crate::data::Dataset {
+    use crate::data::{Dataset, Item, Point};
+    Dataset::from_items(
+        rows.iter()
+            .map(|r| Item {
+                name: r.name.clone(),
+                category: String::new(),
+                image: None,
+                points: vec![Point { t: 0.0, value: r.value, estimated: r.estimated }],
+                sources: if r.source.is_empty() { vec![] } else { vec![r.source.clone()] },
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

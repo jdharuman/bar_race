@@ -1,10 +1,12 @@
-use crate::config::{ChannelConfig, VideoConfig};
+use crate::camera::HeightFollow;
+use crate::config::{ChannelConfig, Style, VideoConfig};
+use crate::walk::WalkPainter;
 use crate::data::Dataset;
 use crate::draw::{Overlay, Painter};
 use crate::encode::{AudioSpec, Encoder};
 use crate::layout::Layout;
 use crate::scene::{Crossfade, RankTracker};
-use crate::timeline::{Format, Phase, Timeline};
+use crate::timeline::{Format, Phase, PillarTimeline, Timeline};
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
 use tiny_skia::Pixmap;
@@ -37,6 +39,9 @@ pub fn pick_music(cfg: &VideoConfig, week_dir: &Path, music_dir: &Path) -> Optio
 /// Render `out/thumb.png` (1280×720) at `year` (default: last year) with a big title overlay.
 pub fn thumb(week_dir: &Path, year: Option<f64>) -> Result<PathBuf> {
     let cfg = VideoConfig::load(&week_dir.join("video.toml"))?;
+    if cfg.style == Style::Pillars {
+        return thumb_pillars(week_dir, &cfg);
+    }
     let ds = Dataset::load(week_dir)?;
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
     let layout = Layout::landscape(1.0, cfg.top_n);
@@ -49,15 +54,7 @@ pub fn thumb(week_dir: &Path, year: Option<f64>) -> Result<PathBuf> {
     let mut painter = Painter::new(&ds, &cfg, &ch, layout.clone())?;
     let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
     painter.paint_thumb(&mut pm, &fs);
-    // background is opaque, so premultiplied RGBA == straight RGBA
-    let img = image::RgbaImage::from_raw(layout.width, layout.height, pm.data().to_vec()).unwrap();
-    let small = image::imageops::resize(&img, 1280, 720, image::imageops::FilterType::Lanczos3);
-    let out_dir = week_dir.join("out");
-    std::fs::create_dir_all(&out_dir)?;
-    let out = out_dir.join("thumb.png");
-    small.save(&out)?;
-    eprintln!("wrote {}", out.display());
-    Ok(out)
+    save_thumb(&pm, week_dir)
 }
 
 /// Where the soundtrack comes from.
@@ -90,11 +87,105 @@ pub fn effective_top_n(cfg: &VideoConfig, fmt: Format, opts: &RenderOpts) -> Res
     Ok(n)
 }
 
+fn resolve_audio(cfg: &VideoConfig, week_dir: &Path, opts: &RenderOpts, duration: f64) -> Result<Option<AudioSpec>> {
+    let track = match &opts.music {
+        MusicChoice::Off => None,
+        MusicChoice::Path(p) => Some(p.clone()),
+        MusicChoice::Auto => pick_music(cfg, week_dir, Path::new("music")),
+    };
+    Ok(match track {
+        Some(path) if path.exists() => Some(AudioSpec { path, duration }),
+        Some(path) => bail!("music file not found: {}", path.display()),
+        None => {
+            eprintln!("warning: no music (set music in video.toml or add tracks to ./music); rendering silent");
+            None
+        }
+    })
+}
+
+/// Downscale a 1920×1080 frame to out/thumb.png (1280×720).
+fn save_thumb(pm: &Pixmap, week_dir: &Path) -> Result<PathBuf> {
+    // background is opaque, so premultiplied RGBA == straight RGBA
+    let img = image::RgbaImage::from_raw(pm.width(), pm.height(), pm.data().to_vec()).unwrap();
+    let small = image::imageops::resize(&img, 1280, 720, image::imageops::FilterType::Lanczos3);
+    let out_dir = week_dir.join("out");
+    std::fs::create_dir_all(&out_dir)?;
+    let out = out_dir.join("thumb.png");
+    small.save(&out)?;
+    eprintln!("wrote {}", out.display());
+    Ok(out)
+}
+
+fn render_pillars(week_dir: &Path, cfg: &VideoConfig, fmt: Format, opts: &RenderOpts) -> Result<PathBuf> {
+    let rows = crate::pillars::load(week_dir)?;
+    let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
+    let (scale, fps) = if opts.preview { (0.5, 30) } else { (1.0, 60) };
+    let (layout, name, portrait) = match fmt {
+        Format::Main => (Layout::landscape(scale, 10), "main.mp4", false),
+        Format::Short => (Layout::portrait(scale, 10), "short.mp4", true),
+    };
+    let tl = PillarTimeline::new(fmt, cfg, rows.len(), fps);
+    let out_dir = week_dir.join("out");
+    std::fs::create_dir_all(&out_dir)?;
+    let out = out_dir.join(name);
+    let mut walk = WalkPainter::new(&rows, cfg, layout.width, layout.height, portrait)?;
+    let mut cards = Painter::new(&crate::pillars::to_dataset(&rows), cfg, &ch, layout.clone())?;
+    let values: Vec<f64> = rows.iter().map(|r| r.value).collect();
+    let mut follow = HeightFollow::new();
+    let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
+    let audio = resolve_audio(cfg, week_dir, opts, tl.total_seconds())?;
+    let mut enc = Encoder::start(&out, layout.width, layout.height, fps, audio)?;
+    let (first, last) = (tl.first as f64, (tl.first + tl.n - 1) as f64);
+    let total = tl.frame_count();
+    let dt = 1.0 / fps as f64;
+    for f in 0..total {
+        let phase = tl.phase_at(f);
+        let p = match phase {
+            Phase::Intro { .. } => first,
+            Phase::Race { t } => t,
+            Phase::Hold | Phase::End { .. } => last,
+        };
+        let s = follow.step(&values, p, dt);
+        walk.paint(&mut pm, p, s);
+        cards.paint_card(&mut pm, &phase);
+        enc.write_frame(pm.data())?;
+        if total >= 10 && f % (total / 10) == 0 {
+            eprintln!("{name}: {}%", f * 100 / total);
+        }
+    }
+    enc.finish()?;
+    eprintln!("wrote {}", out.display());
+    Ok(out)
+}
+
+fn thumb_pillars(week_dir: &Path, cfg: &VideoConfig) -> Result<PathBuf> {
+    let rows = crate::pillars::load(week_dir)?;
+    let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
+    let layout = Layout::landscape(1.0, 10);
+    let values: Vec<f64> = rows.iter().map(|r| r.value).collect();
+    let p = (rows.len() - 1) as f64;
+    let mut follow = HeightFollow::new();
+    let mut s = 1.0;
+    for _ in 0..120 {
+        s = follow.step(&values, p, 1.0 / 60.0);
+    }
+    let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
+    // the big title replaces the small walk title
+    let no_title = VideoConfig { title: String::new(), ..cfg.clone() };
+    WalkPainter::new(&rows, &no_title, layout.width, layout.height, false)?.paint(&mut pm, p, s);
+    let mut cards = Painter::new(&crate::pillars::to_dataset(&rows), cfg, &ch, layout)?;
+    cards.paint_title_overlay(&mut pm, tiny_skia::Color::WHITE);
+    save_thumb(&pm, week_dir)
+}
+
 pub fn render(week_dir: &Path, fmt: Format, opts: &RenderOpts) -> Result<PathBuf> {
     let preview = opts.preview;
     let cfg = VideoConfig::load(&week_dir.join("video.toml"))?;
     if !cfg.reviewed {
-        bail!("video.toml has reviewed = false: check data.csv, then set reviewed = true");
+        bail!("video.toml has reviewed = false: check the data, then set reviewed = true");
+    }
+    if cfg.style == Style::Pillars {
+        return render_pillars(week_dir, &cfg, fmt, opts);
     }
     let ds = Dataset::load(week_dir)?;
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
@@ -117,19 +208,7 @@ pub fn render(week_dir: &Path, fmt: Format, opts: &RenderOpts) -> Result<PathBuf
     let mut leader_fade = Crossfade::new(0.4);
     let mut tracker = RankTracker::new(ds.items.len(), layout.top_n);
     let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
-    let track = match &opts.music {
-        MusicChoice::Off => None,
-        MusicChoice::Path(p) => Some(p.clone()),
-        MusicChoice::Auto => pick_music(&cfg, week_dir, Path::new("music")),
-    };
-    let audio = match track {
-        Some(path) if path.exists() => Some(AudioSpec { path, duration: tl.total_seconds() }),
-        Some(path) => bail!("music file not found: {}", path.display()),
-        None => {
-            eprintln!("warning: no music (set music in video.toml or add tracks to ./music); rendering silent");
-            None
-        }
-    };
+    let audio = resolve_audio(&cfg, week_dir, opts, tl.total_seconds())?;
     let mut enc = Encoder::start(&out, layout.width, layout.height, fps, audio)?;
     let total = tl.frame_count();
     let dt = 1.0 / fps as f64;
