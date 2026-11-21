@@ -53,13 +53,13 @@ impl Layout {
             top_n,
             chart_left: 0.06 * w,
             chart_top: 0.16 * h,
-            chart_right: 0.70 * w,
-            chart_bottom: 0.62 * h,
+            chart_right: 0.58 * w,
+            chart_bottom: 0.87 * h,
             bar_gap: 0.2,
             title_pos: (0.06 * w, 0.065 * h),
             title_size: 0.032 * h,
             subtitle_size: 0.018 * h,
-            label_size: 0.018 * h,
+            label_size: 0.0165 * h,
             year_size: 0.09 * h,
             portrait: true,
             watermark_pos: (0.94 * w, 0.865 * h),
@@ -87,7 +87,7 @@ impl Layout {
     pub fn caption_box(&self) -> (f32, f32, f32, f32) {
         let (w, h) = self.wh();
         if self.portrait {
-            (0.06 * w, 0.635 * h, 0.88 * w, 0.10 * h)
+            (0.60 * w, 0.50 * h, 0.36 * w, 0.11 * h)
         } else {
             (0.60 * w, 0.43 * h, 0.37 * w, 0.17 * h)
         }
@@ -97,7 +97,8 @@ impl Layout {
     pub fn badge_box(&self) -> (f32, f32, f32, f32) {
         let (w, h) = self.wh();
         if self.portrait {
-            (0.06 * w, 0.75 * h, 0.10 * h, 0.10 * h)
+            let s = 0.085 * h;
+            (0.94 * w - s, 0.61 * h, s, s)
         } else {
             let s = 0.12 * h;
             (0.95 * w - s, 0.61 * h, s, s)
@@ -108,7 +109,7 @@ impl Layout {
     pub fn year_box(&self) -> (f32, f32, f32, f32) {
         let (w, h) = self.wh();
         if self.portrait {
-            (0.30 * w, 0.75 * h, 0.64 * w, 0.10 * h)
+            (0.60 * w, 0.715 * h, 0.36 * w, 0.09 * h)
         } else {
             (0.60 * w, 0.74 * h, 0.35 * w, 0.19 * h)
         }
@@ -125,18 +126,24 @@ mod tests {
     }
 
     #[test]
+    fn portrait_bars_use_full_height() {
+        let l = Layout::portrait(1.0, 12);
+        assert!(l.chart_bottom >= 0.86 * l.height as f32, "chart ends at {}", l.chart_bottom / l.height as f32);
+        assert!(l.chart_bottom <= 0.88 * l.height as f32);
+    }
+
+    #[test]
     fn overlay_boxes_clear_of_each_other_and_top_bars() {
         for l in [Layout::landscape(1.0, 10), Layout::portrait(1.0, 12)] {
             let boxes = [l.caption_box(), l.badge_box(), l.year_box()];
             for b in boxes {
                 assert!(b.0 >= 0.0 && b.1 >= 0.0 && b.0 + b.2 <= l.width as f32 && b.1 + b.3 <= l.height as f32, "{b:?}");
+                // both formats: overlays in the lower right, clear of the top (longest) bars
+                let top_slots = if l.portrait { 4.0 } else { 3.0 };
+                assert!(b.1 >= l.chart_top + top_slots * l.slot_height(), "{b:?}");
+                assert!(b.0 >= (l.chart_left + l.chart_right) / 2.0, "{b:?}");
                 if l.portrait {
-                    assert!(b.1 >= l.chart_bottom, "portrait overlay must sit below chart: {b:?}");
                     assert!(b.1 + b.3 <= 0.88 * l.height as f32, "Shorts UI zone: {b:?}");
-                } else {
-                    // clear of the 3 top (longest) bars and the left half of the chart
-                    assert!(b.1 >= l.chart_top + 3.0 * l.slot_height(), "{b:?}");
-                    assert!(b.0 >= (l.chart_left + l.chart_right) / 2.0, "{b:?}");
                 }
             }
             for i in 0..3 {

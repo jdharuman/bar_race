@@ -429,7 +429,7 @@ impl Painter {
         let year = crate::fmt::format_time(fs.t, self.ds.granularity);
         let (yx, yy, yw, yh) = l.year_box();
         let ys = self.fit_size(&year, l.year_size.min(yh / 1.2), true, yw);
-        let (x, align) = if l.portrait { (yx + yw / 2.0, Align::Center) } else { (yx + yw, Align::Right) };
+        let (x, align) = (yx + yw, Align::Right);
         self.txt(pm, &year, x, yy + yh / 2.0, ys, true, with_alpha(self.fg, self.year_a), align);
         self.paint_axis(pm, fs.axis_max);
         // bars, bottom-most first so overtaking bars draw on top
