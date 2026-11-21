@@ -16,7 +16,8 @@ Setting it up on a new machine: open Claude Code in the repo and say
 
 ## The topic list
 
-`topics.csv` (repo root, not in git; start from `topics.example.csv`):
+`topics.csv` (repo root, not in git; setup copies the 365-day list
+`topics.plan.csv` into it, `topics.example.csv` shows the format):
 
 ```csv
 style,title,youtube_url,comment

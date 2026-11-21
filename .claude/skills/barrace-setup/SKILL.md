@@ -160,8 +160,9 @@ owner account on first visit.
 
 ## 11. Dry run
 
-1. `cp $REPO/topics.example.csv $REPO/topics.csv` (if the user has no list yet),
-   or ask them to copy theirs in.
+1. If `$REPO/topics.csv` does not exist: `cp $REPO/topics.plan.csv $REPO/topics.csv`
+   (the user's 365-day list, committed in the repo). Never overwrite an existing
+   `topics.csv`: it is the live queue.
 2. In the n8n UI, open the workflow and click **Execute workflow**. Or run it from a shell with the env file loaded, so the Claude token and
    Telegram settings apply:
    `cd $REPO && set -a && . ~/.config/barrace/env && set +a && uv run --project automation automation/daily.py run`.
