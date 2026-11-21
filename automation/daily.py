@@ -194,7 +194,7 @@ def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
         raise StepError("claude finished but wrote no metadata.json")
     if not ((d / "data.csv").exists() or (d / "pillars.csv").exists()):
         raise StepError("claude finished but wrote no data.csv or pillars.csv")
-    v = run([barrace_bin(root), "validate", str(d)], capture_output=True, text=True)
+    v = run([barrace_bin(root), "validate", str(d)], cwd=root, capture_output=True, text=True)
     if v.returncode != 0:
         raise StepError(f"barrace validate failed\n{_tail(v.stdout + (v.stderr or ''))}")
 
@@ -202,7 +202,7 @@ def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
 def render(root: Path, d: Path, run=subprocess.run) -> None:
     bb = barrace_bin(root)
     for cmd in ([bb, "render", str(d), "--format", "both"], [bb, "thumb", str(d)]):
-        r = run(cmd, capture_output=True, text=True)
+        r = run(cmd, cwd=root, capture_output=True, text=True)
         if r.returncode != 0:
             raise StepError(f"{' '.join(cmd[1:2])} exited {r.returncode}\n"
                             f"{_tail((r.stdout or '') + (r.stderr or ''))}")
@@ -252,6 +252,57 @@ def finish(root: Path, d: Path, status: str) -> dict:
             "short_url": links.get("short", ""), "error": err, "message": msg}
 
 
+def start(root: Path, today: date) -> tuple[int, dict]:
+    """Lock + pick. Exit codes: 0 picked, 2 invalid row, 3 empty list, 4 locked."""
+    if not read_rows(root / "topics.csv"):
+        return 3, {"empty": True, "message": "barrace: topics.csv is empty, nothing to make today."}
+    if not take_lock(root):
+        return 4, {"locked": True}
+    try:
+        return 0, pick(root, today)
+    except Invalid as e:
+        release_lock(root)
+        return 2, {"invalid": str(e), "message": f"❌ barrace skipped a bad topics.csv row: {e}"}
+
+
+def _upload(root: Path, d: Path) -> None:
+    import youtube
+    youtube.upload(d)
+
+
+STEPS = [("research", research), ("render", render), ("upload", _upload)]
+
+
+def send_telegram(text: str) -> None:
+    """Send `text` to TELEGRAM_CHAT_ID; prints instead when not configured. Never raises."""
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    print(text)
+    if not (token and chat):
+        return
+    import urllib.parse
+    import urllib.request
+    data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
+    try:
+        urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data, timeout=30)
+    except Exception as e:  # a lost message must not fail the run
+        print(f"telegram send failed: {e}", file=sys.stderr)
+
+
+def run_all(root: Path, today: date, steps=None, notify=send_telegram) -> int:
+    code, payload = start(root, today)
+    if code:
+        if "message" in payload:
+            notify(payload["message"])
+        return code
+    d = Path(payload["dir"])
+    for name, fn in (STEPS if steps is None else steps):
+        if run_step(name, d, lambda: fn(root, d)):
+            notify(finish(root, d, "failed")["message"])
+            return 1
+    notify(finish(root, d, "uploaded")["message"])
+    return 0
+
+
 def _print(obj) -> None:
     print(json.dumps(obj))
 
@@ -261,6 +312,7 @@ def main(argv=None) -> int:
     ap.add_argument("--root", type=Path, default=ROOT)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("pick")
+    sub.add_parser("run", help="all steps for the first topic, then notify (what n8n calls)")
     sub.add_parser("auth")
     for step in ("research", "render", "upload"):
         sub.add_parser(step).add_argument("dir", type=Path)
@@ -271,19 +323,12 @@ def main(argv=None) -> int:
     root = a.root.resolve()
 
     if a.cmd == "pick":
-        if not read_rows(root / "topics.csv"):
-            _print({"empty": True})
-            return 3
-        if not take_lock(root):
-            _print({"locked": True})
-            return 4
-        try:
-            _print(pick(root, date.today()))
-            return 0
-        except Invalid as e:
-            release_lock(root)
-            _print({"invalid": str(e), "message": f"barrace: skipped a bad topics.csv row: {e}"})
-            return 2
+        code, payload = start(root, date.today())
+        _print(payload)
+        return code
+    if a.cmd == "run":
+        code = run_all(root, date.today())
+        return 0 if code in (3, 4) else code  # empty list / already running are not failures
     if a.cmd == "research":
         d = a.dir.resolve()
         return run_step("research", d, lambda: research(root, d))
@@ -291,9 +336,8 @@ def main(argv=None) -> int:
         d = a.dir.resolve()
         return run_step("render", d, lambda: render(root, d))
     if a.cmd == "upload":
-        import youtube
         d = a.dir.resolve()
-        return run_step("upload", d, lambda: youtube.upload(d))
+        return run_step("upload", d, lambda: _upload(root, d))
     if a.cmd == "auth":
         import youtube
         youtube.auth()

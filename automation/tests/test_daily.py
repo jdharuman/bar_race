@@ -59,7 +59,7 @@ def test_pick_empty_exit3(tmp_path):
     write_topics(tmp_path, [])
     r = cli(tmp_path, "pick")
     assert r.returncode == 3
-    assert json.loads(r.stdout) == {"empty": True}
+    assert json.loads(r.stdout)["empty"] is True
 
 
 def test_pick_locked_exit4(tmp_path):
@@ -167,6 +167,7 @@ class FakeRun:
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
+        self.cwds = getattr(self, "cwds", []) + [kw.get("cwd")]
         if self.on_call:
             self.on_call(cmd)
         code, out = self.results.pop(0)
@@ -238,3 +239,47 @@ def test_upload_cli_without_token_writes_reauth(tmp_path):
                        env={**os.environ, "BARRACE_CONFIG": str(tmp_path / "cfg")})
     assert r.returncode == 1, r.stderr
     assert "daily.py auth" in (d / "error.txt").read_text()
+
+
+def test_render_runs_from_repo_root(tmp_path):
+    run = FakeRun([(0, ""), (0, "")])
+    daily.render(tmp_path, tmp_path / "v", run=run)
+    assert [c[1] for c in run.calls] == ["render", "thumb"]
+    assert run.cwds == [tmp_path, tmp_path]
+
+
+def ok_step(root, d):
+    pass
+
+
+def test_run_all_success(tmp_path):
+    write_topics(tmp_path, [row()])
+    sent = []
+
+    def upload(root, d):
+        (d / "upload.json").write_text(json.dumps({"main": "m1", "short": "s1"}))
+    steps = [("research", ok_step), ("render", ok_step), ("upload", upload)]
+    assert daily.run_all(tmp_path, TODAY, steps=steps, notify=sent.append) == 0
+    assert daily.read_rows(tmp_path / "topics_done.csv")[0]["status"] == "uploaded"
+    assert "✅" in sent[0] and "m1" in sent[0]
+    assert not (tmp_path / "videos" / ".lock").exists()
+
+
+def test_run_all_stops_at_failed_step(tmp_path):
+    write_topics(tmp_path, [row()])
+    sent, called = [], []
+
+    def bad(root, d):
+        raise daily.StepError("ffmpeg missing")
+    steps = [("research", ok_step), ("render", bad), ("upload", lambda r, d: called.append(1))]
+    assert daily.run_all(tmp_path, TODAY, steps=steps, notify=sent.append) == 1
+    done = daily.read_rows(tmp_path / "topics_done.csv")[0]
+    assert done["status"] == "failed" and "render: ffmpeg missing" in done["error"]
+    assert called == []
+    assert "FAILED" in sent[0]
+
+
+def test_run_all_empty_list_notifies(tmp_path):
+    sent = []
+    assert daily.run_all(tmp_path, TODAY, steps=[], notify=sent.append) == 3
+    assert "empty" in sent[0]

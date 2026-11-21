@@ -10,7 +10,15 @@ Needs Rust and `ffmpeg` on PATH.
 cargo install --path .
 ```
 
-## Weekly flow
+## Daily automation
+
+`topics.csv` → Claude researches the top topic → barrace renders → private
+YouTube upload → Telegram message → you review and publish. Runs daily from
+n8n. See [docs/automation.md](docs/automation.md); to install it on a machine,
+ask Claude Code in this repo to "set up barrace automation"
+(`.claude/skills/barrace-setup/`).
+
+## Manual flow
 
 ```bash
 mkdir -p weeks/2026-11-30-my-topic        # add data.csv + video.toml (+ events.csv)
@@ -146,9 +154,10 @@ Race-only settings (`top_n`, `[[pace]]`, `--bars`, `thumb --year`) are
 ignored. The walk's sky look is fixed; the intro and end cards follow
 `channel.toml`.
 
-**Photos:** the tool never downloads images. Use images you have the rights
-to (flags, logos you're allowed to show, or free-licence photos such as
-Wikimedia Commons). Photos of people are often copyrighted and a common cause
-of takedowns. A row without an image gets an initials tile.
+**Photos:** the renderer only uses images in the folder. Use images you have
+the rights to. The daily research step downloads only public-domain flags and
+free-licence Wikimedia Commons files (CC0, public domain, CC BY, CC BY-SA) and
+records each licence. Photos of people are often copyrighted and a common
+cause of takedowns. A row without an image gets an initials tile.
 
 Example: `weeks/2026-11-30-tallest-buildings/`.
