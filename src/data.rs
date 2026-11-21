@@ -13,12 +13,14 @@ pub enum Granularity {
 /// "1999" → 1999.0, "1999-02" → 1999 + 1/12, "1999-Q2" → 1999.25 (fractional years).
 pub fn parse_time(s: &str) -> Option<(f64, Granularity)> {
     let s = s.trim();
-    let year_part = s.get(0..4)?;
-    if !year_part.bytes().all(|b| b.is_ascii_digit()) {
+    // optional minus sign (BCE) then 1–4 year digits
+    let sign_len = usize::from(s.starts_with('-'));
+    let digits = s[sign_len..].bytes().take_while(|b| b.is_ascii_digit()).count();
+    if !(1..=4).contains(&digits) {
         return None;
     }
-    let year: f64 = year_part.parse().ok()?;
-    let rest = &s[4..];
+    let year: f64 = s[..sign_len + digits].parse().ok()?;
+    let rest = &s[sign_len + digits..];
     if rest.is_empty() {
         return Some((year, Granularity::Year));
     }
@@ -270,5 +272,14 @@ mod tests {
         let dir = temp_week(&format!("{HEADER}A,X,,2000,1,,false\nA,X,,2000-01,2,,false\n"));
         let (_, errs, _) = parse(&dir).unwrap();
         assert!(errs.iter().any(|e| e.contains("duplicate")), "{errs:?}");
+    }
+
+    #[test]
+    fn short_and_negative_years() {
+        assert_eq!(parse_time("800"), Some((800.0, Granularity::Year)));
+        assert_eq!(parse_time("-500"), Some((-500.0, Granularity::Year)));
+        assert_eq!(parse_time("45-03"), Some((45.0 + 2.0 / 12.0, Granularity::Month)));
+        assert_eq!(parse_time("12345"), None);
+        assert_eq!(parse_time("-"), None);
     }
 }

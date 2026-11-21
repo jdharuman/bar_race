@@ -158,6 +158,7 @@ impl Painter {
             Some(img) => {
                 let paint = PixmapPaint { opacity: a, ..Default::default() };
                 pm.draw_pixmap(x.round() as i32, y.round() as i32, img.as_ref(), &paint, Transform::identity(), None);
+                ring(pm, x + s / 2.0, y + s / 2.0, s / 2.0, with_alpha(self.fg, 0.2 * a));
             }
             None => {
                 let c = self.item_colors[i];
@@ -189,7 +190,8 @@ impl Painter {
     /// Largest size ≤ `size` at which `s` fits in `max_w`.
     fn fit_size(&mut self, s: &str, size: f32, bold: bool, max_w: f32) -> f32 {
         let w = self.text.measure(s, size, bold);
-        if w <= max_w { size } else { (size * max_w / w).floor() }
+        // floor at 4 px: cosmic-text panics on a zero line height
+        if w <= max_w { size } else { (size * max_w / w).floor().max(4.0) }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -379,7 +381,7 @@ impl Painter {
             if let Some(r) = Rect::from_xywh(x, l.chart_top - tick_size * 0.4, (l.height as f32 / 1080.0).max(1.0), l.chart_bottom - l.chart_top) {
                 pm.fill_rect(r, &paint, Transform::identity(), None);
             }
-            let label = format_value(v, &self.cfg.unit_prefix, &self.cfg.unit_suffix, self.cfg.number_style);
+            let label = crate::fmt::format_tick(v, &self.cfg.unit_prefix, &self.cfg.unit_suffix, self.cfg.number_style);
             let y = l.chart_top - tick_size * 1.1;
             self.txt(pm, &label, x, y, tick_size, false, with_alpha(self.fg, 0.45), Align::Center);
         }
@@ -446,6 +448,7 @@ impl Painter {
                 let paint = PixmapPaint { opacity: b.alpha, ..Default::default() };
                 let (ix, iy) = ((icx - bh / 2.0).round() as i32, (cy - bh / 2.0).round() as i32);
                 pm.draw_pixmap(ix, iy, img.as_ref(), &paint, Transform::identity(), None);
+                ring(pm, icx, cy, bh / 2.0, with_alpha(self.fg, 0.2 * b.alpha));
             }
             None => {
                 let mut paint = Paint::default();
@@ -464,7 +467,8 @@ impl Painter {
         let mut after = icx + bh / 2.0 + pad;
         if name_w + 2.0 * pad <= bw {
             // inside the bar: always white for contrast against the bar colour
-            self.txt(pm, &name, x0 + pad, cy, label_size, true, with_alpha(Color::WHITE, b.alpha), Align::Left);
+            let on_bar = label_color_on(self.item_colors[b.idx]);
+            self.txt(pm, &name, x0 + pad, cy, label_size, true, with_alpha(on_bar, b.alpha), Align::Left);
         } else {
             self.txt(pm, &name, after, cy, label_size, true, fg, Align::Left);
             after += name_w + pad;
@@ -635,6 +639,23 @@ fn cursor_path(x: f32, y: f32, s: f32) -> tiny_skia::Path {
     }
     pb.close();
     pb.finish().unwrap()
+}
+
+/// White on dark bars, near-black on light ones (relative luminance > 0.6).
+pub fn label_color_on(bar: Color) -> Color {
+    let lum = 0.2126 * bar.red() + 0.7152 * bar.green() + 0.0722 * bar.blue();
+    if lum > 0.6 { hex("#111827") } else { Color::WHITE }
+}
+
+/// Thin outline so white parts of a flag stay visible on a light background.
+fn ring(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, color: Color) {
+    let mut paint = Paint::default();
+    paint.set_color(color);
+    paint.anti_alias = true;
+    let stroke = tiny_skia::Stroke { width: (r * 0.08).max(1.0), ..Default::default() };
+    if let Some(c) = PathBuilder::from_circle(cx, cy, r) {
+        pm.stroke_path(&c, &paint, &stroke, Transform::identity(), None);
+    }
 }
 
 /// Rectangle with all four corners rounded by r.
@@ -1084,5 +1105,45 @@ mod tests {
         assert!(near(pm.pixel(probe.0, probe.1).unwrap(), "#dc2626"));
         let pm = paint_end_at(&mut p, &fs, 0.7);
         assert!(near(pm.pixel(probe.0, probe.1).unwrap(), "#9ca3af"));
+    }
+
+    #[test]
+    fn huge_caption_does_not_panic() {
+        let ds = Dataset::load(Path::new("tests/fixtures/week")).unwrap();
+        let fs = settle(&ds, 10, 2001.0);
+        let mut p = painter(&ds);
+        let mut ev = fixture_events();
+        ev[0].caption = "x".repeat(3000);
+        ev[0].headline = "y".repeat(3000);
+        p.set_events(ev);
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint_with(&mut pm, &Phase::Race { t: 2001.0 }, &fs, &Overlay { caption: Some((0, 1.0)), leader: None });
+        assert!(p.fit_size("z", 40.0, true, 0.5) >= 4.0);
+    }
+
+    #[test]
+    fn label_dark_on_light_bar() {
+        assert_eq!(label_color_on(hex("#facc15")), hex("#111827"));
+        assert_eq!(label_color_on(hex("#1d4ed8")), Color::WHITE);
+    }
+
+    #[test]
+    fn image_circle_has_ring_on_light_theme() {
+        let dir = crate::testutil::temp_week("name\n");
+        let png = dir.join("white.png");
+        image::RgbaImage::from_pixel(64, 64, image::Rgba([255, 255, 255, 255])).save(&png).unwrap();
+        let ds = one_item(Some(png));
+        let fs = settle(&ds, 10, 2000.5);
+        let mut p = painter(&ds);
+        let mut pm = Pixmap::new(p.layout().width, p.layout().height).unwrap();
+        p.paint(&mut pm, &Phase::Race { t: 2000.5 }, &fs);
+        let (cx, cy) = p.bar_tip(&fs.bars[0], fs.axis_max);
+        let r = p.layout().bar_height() / 2.0;
+        // scan across the circle's top edge: some pixel must be darker than white
+        let darker = (-2..=2).any(|d| {
+            let px = pm.pixel(cx as u32, (cy - r + d as f32) as u32).unwrap();
+            px.red() < 235
+        });
+        assert!(darker, "white flag edge invisible on white background");
     }
 }

@@ -54,6 +54,15 @@ pub fn format_value(v: f64, prefix: &str, suffix: &str, style: NumberStyle) -> S
     format!("{sign}{prefix}{num}{suffix}")
 }
 
+/// Axis tick label: like `format_value`, but whole numbers never get a decimal.
+pub fn format_tick(v: f64, prefix: &str, suffix: &str, style: NumberStyle) -> String {
+    if style == NumberStyle::Full && v.fract() == 0.0 {
+        let sign = if v < 0.0 { "-" } else { "" };
+        return format!("{sign}{prefix}{}{suffix}", with_commas(v.abs()));
+    }
+    format_value(v, prefix, suffix, style)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +99,13 @@ mod tests {
         assert_eq!(format_time(1999.26, Granularity::Quarter), "Q2 1999");
         assert_eq!(format_time(1999.999, Granularity::Year), "1999");
         assert_eq!(format_time(1999.9999999999, Granularity::Year), "2000");
+    }
+
+    #[test]
+    fn whole_tick_labels_have_no_decimal() {
+        assert_eq!(format_tick(0.0, "", "", NumberStyle::Full), "0");
+        assert_eq!(format_tick(500_000_000.0, "", "", NumberStyle::Full), "500,000,000");
+        assert_eq!(format_tick(0.2, "", "", NumberStyle::Full), "0.2");
+        assert_eq!(format_tick(20.0, "$", "B", NumberStyle::Full), "$20B");
     }
 }
