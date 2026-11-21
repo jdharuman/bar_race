@@ -24,6 +24,9 @@ processing: `uv run --with pandas python <dir>/scripts/x.py`), `yt-dlp`,
 `ls`, `mkdir`, `unzip`, `file`, `head`, `wc`, and `<barrace> validate`. To
 copy, move or delete files, use Python via `uv run`. Plus the Read, Write,
 Edit, Glob, Grep, WebSearch and WebFetch tools.
+Run **one plain command per Bash call** with absolute paths: no `cd`, `;`,
+`&&`, pipes into other tools, loops or heredocs (those are refused). Create
+files, scripts included, with the Write tool.
 
 **Can't do it honestly?** If no trustworthy source covers the topic (or
 most of its values would be guesses), don't invent data. Write the reason in
