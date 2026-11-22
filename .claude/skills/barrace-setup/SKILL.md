@@ -139,6 +139,36 @@ sudo loginctl enable-linger $USER     # keep it running when logged out / after 
 systemctl --user status n8n --no-pager
 ```
 
+### Telegram bot service (one-off videos on demand)
+
+`~/.config/systemd/user/barrace-bot.service`:
+
+```ini
+[Unit]
+Description=barrace Telegram bot (one-off videos on demand)
+After=network-online.target
+
+[Service]
+EnvironmentFile=/home/<user>/.config/barrace/env
+WorkingDirectory=/home/<user>/barrace
+ExecStart=/home/<user>/barrace/automation/.venv/bin/python automation/bot.py
+Restart=always
+RestartSec=10
+# Only stop the bot itself: a video it started keeps running across bot restarts.
+KillMode=process
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now barrace-bot
+```
+
+Needs a numeric `TELEGRAM_CHAT_ID` (the bot obeys only that chat). Check: send
+`/status` to the bot; it answers "Idle".
+
 ## 10. Import and turn on the workflow
 
 Tested with n8n 2.48. Run with the env file loaded: without

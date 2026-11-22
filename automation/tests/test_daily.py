@@ -68,7 +68,8 @@ def test_pick_locked_exit4(tmp_path):
     (tmp_path / "videos" / ".lock").write_text("x")
     r = cli(tmp_path, "pick")
     assert r.returncode == 4
-    assert json.loads(r.stdout) == {"locked": True}
+    out = json.loads(r.stdout)
+    assert out["locked"] is True and out["holder"]["kind"] == "daily"  # old plain lock = daily
     assert not (tmp_path / "videos" / "2026-11-22-largest-economies").exists()
 
 

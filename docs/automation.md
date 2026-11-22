@@ -56,6 +56,26 @@ Want it now instead of 02:00? In n8n, open "barrace daily video" → "Execute
 workflow", or on the machine:
 `cd ~/barrace && uv run --project automation automation/daily.py run`.
 
+## One-off videos from Telegram
+
+The `barrace-bot` service (`automation/bot.py`) lets you order an extra video
+from the Telegram bot, independent of `topics.csv`:
+
+1. Send `/new` to the bot. Tap a style, type a title, optionally send a YouTube
+   link (topic hint only) and notes for the research, then tap **Make now**.
+2. It runs `daily.py request …`: same research → render → private upload, in
+   `videos/<date>-req-<slug>/`. It never reads or changes `topics.csv` or
+   `topics_done.csv`; requests are logged in `requests_done.csv`.
+3. You get the same ✅/❌ message with Studio links. `/retry` resumes the last
+   failed request (finished steps are skipped). `/status` says what is running.
+
+Only one video is made at a time. A request waits for a running video; the
+02:00 daily video waits (up to 4 h) for a running request instead of
+skipping the day. Keep YouTube's quota in mind: about 3 videos a day in total.
+The bot only obeys `TELEGRAM_CHAT_ID`; messages from anyone else are ignored.
+Bot logs: `journalctl --user -u barrace-bot`; each request's output:
+`videos/.requests/`.
+
 ## Running steps by hand
 
 ```bash
@@ -83,6 +103,7 @@ A step that fails writes `videos/<dir>/error.txt`. Claude's full output is in
 | no Telegram message | check `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` in `~/.config/barrace/env` |
 | Telegram "❌ barrace: n8n run … failed" | n8n itself saw the run fail (from the "barrace error alert" workflow). If a pipeline report came just before, it is the same failure; otherwise the script could not start: open n8n → Executions for the output |
 | no message at all by ~03:30 | the machine was off/asleep or n8n was down: `systemctl --user status n8n` |
+| bot doesn't answer | `systemctl --user status barrace-bot`; `journalctl --user -u barrace-bot -n 30` |
 | a run seems stuck / "locked" | a run holds `videos/.lock` (stale after 6 h). Delete it only if no run is active |
 
 ## Limits to know

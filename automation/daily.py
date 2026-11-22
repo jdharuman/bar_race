@@ -103,13 +103,31 @@ def _lock(root: Path) -> Path:
     return root / "videos" / ".lock"
 
 
-def take_lock(root: Path) -> bool:
+def take_lock(root: Path, kind: str = "daily", title: str = "") -> bool:
+    """One run at a time (daily or Telegram request). The lock says who holds it."""
     lock = _lock(root)
     lock.parent.mkdir(parents=True, exist_ok=True)
     if lock.exists() and time.time() - lock.stat().st_mtime < LOCK_STALE_S:
         return False
-    lock.write_text(datetime.now().isoformat())
+    lock.write_text(json.dumps({"kind": kind, "title": title,
+                                "since": datetime.now().isoformat(timespec="seconds")}))
     return True
+
+
+def lock_holder(root: Path) -> dict | None:
+    """Who holds a live lock: {"kind", "title", "since"}, or None when free/stale."""
+    lock = _lock(root)
+    try:
+        if time.time() - lock.stat().st_mtime >= LOCK_STALE_S:
+            return None
+        text = lock.read_text()
+    except FileNotFoundError:
+        return None
+    try:
+        info = json.loads(text)
+        return info if isinstance(info, dict) else {"kind": "daily", "since": text.strip()}
+    except ValueError:  # older plain-timestamp lock
+        return {"kind": "daily", "title": "", "since": text.strip()}
 
 
 def release_lock(root: Path) -> None:
@@ -297,14 +315,17 @@ def finish(root: Path, d: Path, status: str) -> dict:
     move_to_done(root, row, folder=str(d), status=status, error=err,
                  main_video_id=up.get("main", ""), short_video_id=up.get("short", ""))
     release_lock(root)
+    return report(row, up, status, err, "To retry, put the row back at the top of topics.csv.")
+
+
+def report(row: dict, up: dict, status: str, err: str, retry_hint: str, tag: str = "") -> dict:
     name = row["title"] or row["youtube_url"]
     links = {k: studio(up[k]) for k in ("main", "short") if up.get(k)}
     if status == "uploaded":
-        msg = (f"✅ Ready to review: {name}\nMain: {links.get('main', '-')}\n"
+        msg = (f"✅ Ready to review{tag}: {name}\nMain: {links.get('main', '-')}\n"
                f"Short: {links.get('short', '-')}\nWatch both, then publish in YouTube Studio.")
     else:
-        msg = (f"❌ FAILED: {name}\n{err[-1500:]}\n"
-               "To retry, put the row back at the top of topics.csv.")
+        msg = f"❌ FAILED{tag}: {name}\n{err[-1500:]}\n{retry_hint}"
         if links:
             msg += "\nPartly uploaded (private): " + " ".join(links.values())
     return {"status": status, "title": name, "main_url": links.get("main", ""),
@@ -320,8 +341,8 @@ def start(root: Path, today: date) -> tuple[int, dict]:
         return 2, {"invalid": str(e), "message": f"❌ barrace did nothing today: {e}"}
     if not topics:
         return 3, {"empty": True, "message": "barrace: topics.csv is empty, nothing to make today."}
-    if not take_lock(root):
-        return 4, {"locked": True}
+    if not take_lock(root, "daily", topics[0].get("title", "")):
+        return 4, {"locked": True, "holder": lock_holder(root)}
     try:
         return 0, pick(root, today)
     except Invalid as e:
@@ -352,23 +373,132 @@ def send_telegram(text: str) -> None:
         print(f"telegram send failed: {e}", file=sys.stderr)
 
 
-def run_all(root: Path, today: date, steps=None, notify=send_telegram) -> int:
-    code, payload = start(root, today)
+LOCK_POLL_S = 60
+DAILY_WAIT_S = 4 * 3600    # the daily video waits this long for a Telegram request to finish
+REQUEST_WAIT_S = 6 * 3600  # a Telegram request waits this long for a running video
+
+
+def run_all(root: Path, today: date, steps=None, notify=send_telegram,
+            sleep=time.sleep, wait_s: int = DAILY_WAIT_S) -> int:
+    waited = 0
+    while True:
+        code, payload = start(root, today)
+        busy_with_request = code == 4 and (payload.get("holder") or {}).get("kind") == "request"
+        if not busy_with_request or waited >= wait_s:
+            break
+        sleep(LOCK_POLL_S)  # a Telegram request is running: wait, don't skip today's video
+        waited += LOCK_POLL_S
     if code:
         if "message" in payload:
             notify(payload["message"])
+        elif busy_with_request:
+            notify(f"❌ barrace skipped today's video: a Telegram request was still "
+                   f"running after {wait_s // 3600} h.")
         return code
     d = Path(payload["dir"])
-    for name, fn in (STEPS if steps is None else steps):
+    return run_steps(root, d, STEPS if steps is None else steps, notify,
+                     lambda status: finish(root, d, status))
+
+
+def run_steps(root: Path, d: Path, steps, notify, finish_fn) -> int:
+    for name, fn in steps:
         marker = d / f".ok-{name}"
         if marker.exists():  # finished in an earlier, failed run of this folder
             continue
         if run_step(name, d, lambda: fn(root, d)):
-            notify(finish(root, d, "failed")["message"])
+            notify(finish_fn("failed")["message"])
             return 1
         marker.touch()
-    notify(finish(root, d, "uploaded")["message"])
+    notify(finish_fn("uploaded")["message"])
     return 0
+
+
+# ---- one-off videos requested from the Telegram bot (never touch topics.csv) ----
+
+REQUESTS_DONE = "requests_done.csv"
+
+
+def start_request(root: Path, today: date, row: dict) -> Path:
+    """New folder for a Telegram request. Caller must hold the lock."""
+    base = root / "videos" / f"{today.isoformat()}-req-{slugify(row)}"
+    d, n = base, 2
+    while d.exists():
+        d, n = base.with_name(f"{base.name}-{n}"), n + 1
+    d.mkdir(parents=True)
+    topic = {"row": row, "redo_of": None, "request": True,
+             "picked_at": datetime.now().isoformat(timespec="seconds")}
+    (d / "topic.json").write_text(json.dumps(topic, indent=2))
+    return d
+
+
+def finish_request(root: Path, d: Path, status: str) -> dict:
+    """Log the request to requests_done.csv, release the lock, build the report."""
+    row = json.loads((d / "topic.json").read_text())["row"]
+    up = json.loads((d / "upload.json").read_text()) if (d / "upload.json").exists() else {}
+    err = (d / "error.txt").read_text().strip() if (d / "error.txt").exists() else ""
+    if status == "failed" and not err:
+        err = "unknown error (see the request log in videos/.requests/)"
+    done = read_rows(root / REQUESTS_DONE)
+    done.append({**row, "finished_at": datetime.now().isoformat(timespec="seconds"),
+                 "folder": str(d), "status": status, "error": err,
+                 "main_video_id": up.get("main", ""), "short_video_id": up.get("short", "")})
+    write_rows(root / REQUESTS_DONE, DONE_COLS, done)
+    release_lock(root)
+    return report(row, up, status, err,
+                  "To retry without redoing finished steps, send /retry to the bot.",
+                  tag=" (Telegram request)")
+
+
+def last_failed_request(root: Path) -> Path | None:
+    """Folder of the latest request, if it failed and still exists."""
+    done = read_rows(root / REQUESTS_DONE)
+    if not done or done[-1].get("status") != "failed":
+        return None
+    d = Path(done[-1].get("folder", ""))
+    return d if done[-1].get("folder") and (d / "topic.json").exists() else None
+
+
+def run_request(root: Path, today: date, row: dict | None = None, resume: Path | None = None,
+                steps=None, notify=send_telegram, sleep=time.sleep,
+                wait_s: int = REQUEST_WAIT_S) -> int:
+    """Exit codes: 0 uploaded, 1 failed step, 2 bad request, 4 lock never freed."""
+    if resume is not None:
+        row = json.loads((resume / "topic.json").read_text())["row"]
+    row = {c: (row or {}).get(c, "").strip() for c in TOPIC_COLS}
+    if problem := row_problem(row):
+        notify(f"❌ Telegram request rejected: {problem}")
+        return 2
+    waited = 0
+    while not take_lock(root, "request", row["title"] or row["youtube_url"]):
+        if waited >= wait_s:
+            notify(f"❌ Telegram request gave up: another video was still being made "
+                   f"after {wait_s // 3600} h. Send it again later.")
+            return 4
+        sleep(LOCK_POLL_S)
+        waited += LOCK_POLL_S
+    try:
+        if resume is not None:
+            d = resume
+            (d / "error.txt").unlink(missing_ok=True)
+        else:
+            d = start_request(root, today, row)
+    except BaseException:
+        release_lock(root)
+        raise
+    return run_steps(root, d, STEPS if steps is None else steps, notify,
+                     lambda status: finish_request(root, d, status))
+
+
+def runs_today(root: Path, today: date) -> int:
+    """Daily + request runs finished today (YouTube allows about 3 uploads of a pair a day)."""
+    n = 0
+    for name in ("topics_done.csv", REQUESTS_DONE):
+        try:
+            rows = read_rows(root / name)
+        except BadFile:
+            continue
+        n += sum(1 for r in rows if r.get("finished_at", "").startswith(today.isoformat()))
+    return n
 
 
 def _print(obj) -> None:
@@ -382,6 +512,12 @@ def main(argv=None) -> int:
     sub.add_parser("pick")
     sub.add_parser("run", help="all steps for the first topic, then notify (what n8n calls)")
     sub.add_parser("auth")
+    rq = sub.add_parser("request", help="one-off video from the Telegram bot; never touches topics.csv")
+    rq.add_argument("--style", choices=STYLES)
+    rq.add_argument("--title", default="")
+    rq.add_argument("--url", default="")
+    rq.add_argument("--comment", default="")
+    rq.add_argument("--resume", type=Path, help="retry a failed request folder")
     for step in ("research", "render", "upload"):
         sub.add_parser(step).add_argument("dir", type=Path)
     f = sub.add_parser("finish")
@@ -406,6 +542,16 @@ def main(argv=None) -> int:
     if a.cmd == "upload":
         d = a.dir.resolve()
         return run_step("upload", d, lambda: _upload(root, d))
+    if a.cmd == "request":
+        try:
+            if a.resume:
+                return run_request(root, date.today(), resume=a.resume.resolve())
+            return run_request(root, date.today(), row={
+                "style": a.style or "", "title": a.title, "youtube_url": a.url,
+                "comment": a.comment})
+        except Exception as e:  # steps report themselves; this catches everything else
+            send_telegram(f"❌ Telegram request crashed: {type(e).__name__}: {e}")
+            return 70
     if a.cmd == "auth":
         import youtube
         youtube.auth()
