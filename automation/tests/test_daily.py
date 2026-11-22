@@ -17,8 +17,9 @@ def write_topics(root, rows):
     daily.write_rows(root / "topics.csv", daily.TOPIC_COLS, rows)
 
 
-def row(style="race", title="Largest Economies", url="", comment="", look=""):
-    return {"style": style, "title": title, "youtube_url": url, "comment": comment, "look": look}
+def row(style="race", title="Largest Economies", url="", comment="", look="", theme=""):
+    return {"style": style, "title": title, "youtube_url": url, "comment": comment, "look": look,
+            "theme": theme}
 
 
 def cli(root, *args):
@@ -303,7 +304,7 @@ def test_headerless_topics_not_wiped(tmp_path):
 def test_excel_bom_header_ok(tmp_path):
     (tmp_path / "topics.csv").write_bytes("﻿style,title,youtube_url,comment\nrace,A,,\n".encode())
     r = row(title="A")
-    del r["look"]  # an old 4-column file has no look column
+    del r["look"], r["theme"]  # an old 4-column file has neither column
     assert daily.read_rows(tmp_path / "topics.csv") == [r]
 
 
@@ -433,7 +434,8 @@ def test_old_four_column_topics_still_read(tmp_path):
 def test_look_validated():
     assert daily.row_problem(row(style="stocks", title="A vs B", look="neon")) is None
     assert daily.row_problem(row(style="stocks", title="A vs B", look="NEON")) is None
-    assert "only for stocks" in daily.row_problem(row(look="neon"))
+    assert "only for line charts" in daily.row_problem(row(look="neon"))
+    assert daily.row_problem(row(style="compare", title="A vs B", look="neon")) is None
     assert "look must be" in daily.row_problem(row(style="stocks", title="A vs B", look="pink"))
 
 

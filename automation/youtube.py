@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-from daily import StepError
+from daily import COST_THUMB, COST_VIDEO, QUOTA_WAIT, Quota, StepError
 
 CONFIG = Path(os.environ.get("BARRACE_CONFIG", Path.home() / ".config" / "barrace"))
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
@@ -28,19 +28,33 @@ def build_body(meta: dict, short: bool) -> dict:
             "status": {"privacyStatus": "private", "selfDeclaredMadeForKids": False}}
 
 
-def upload_all(d: Path, yt) -> dict:
-    """Upload main + Short and the thumbnail, resuming from upload.json."""
+def _need(d: Path, quota, units: int) -> None:
+    """Stop (not fail) when today's quota can't cover `units`; the run holds the upload."""
+    if quota is not None and quota.left() < units:
+        (d / QUOTA_WAIT).write_text(f"needs {units}, {quota.left()} left on {quota.day}\n")
+        raise StepError(f"waiting for YouTube quota ({quota.left()} of {quota.limit} units left today)")
+
+
+def upload_all(d: Path, yt, quota=None) -> dict:
+    """Upload main + Short and the thumbnail, resuming from upload.json.
+    With `quota`, never starts a call the day's remaining units can't cover."""
     meta = json.loads((d / "metadata.json").read_text())
     state_path = d / "upload.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     for key in ("main", "short"):
         if not state.get(key):
+            _need(d, quota, COST_VIDEO)
             state[key] = yt.insert(d / "out" / f"{key}.mp4", build_body(meta[key], key == "short"))
             state_path.write_text(json.dumps(state))
+            if quota is not None:
+                quota.spend(COST_VIDEO)
     if not state.get("thumbnail"):
+        _need(d, quota, COST_THUMB)
         yt.set_thumbnail(state["main"], d / "out" / "thumb.png")
         state["thumbnail"] = True
         state_path.write_text(json.dumps(state))
+        if quota is not None:
+            quota.spend(COST_THUMB)
     return state
 
 
@@ -82,10 +96,12 @@ class YouTube:
         self.api.thumbnails().set(videoId=vid, media_body=MediaFileUpload(str(path))).execute()
 
 
-def upload(d: Path) -> dict:
+def upload(d: Path, root: Path) -> dict:
     from googleapiclient.errors import HttpError
+    quota = Quota(root)
+    _need(d, quota, COST_THUMB)  # nothing at all left: don't even log in
     try:
-        return upload_all(d, YouTube())
+        return upload_all(d, YouTube(), quota)
     except HttpError as e:
         raise StepError(f"YouTube API: {e}") from e
 

@@ -198,3 +198,20 @@ def test_companies_split():
     assert bot.companies("Apple vs. Microsoft & Tesla") == ["Apple", "Microsoft", "Tesla"]
     assert bot.companies("Coca-Cola VS Pepsi") == ["Coca-Cola", "Pepsi"]
     assert bot.companies("AT&T vs Verizon") == ["AT&T", "Verizon"]
+
+
+def test_compare_form_asks_look(tmp_path):
+    b, tg, started = make(tmp_path)
+    fill(b, msg("/new"), tap("style:compare"))
+    assert "What to compare" in tg.texts()[-1]
+    fill(b, msg("Messi vs Ronaldo career goals"))
+    assert tg.last_buttons() == ["look:neon", "look:light"]
+    fill(b, tap("look:light"), tap("skip"), tap("skip"), tap("go"))
+    assert started[0][0] == "--style=compare" and started[0][-1] == "--look=light"
+
+
+def test_status_shows_quota(tmp_path):
+    b, tg, _ = make(tmp_path)
+    daily.Quota(tmp_path).spend(3250)
+    b.handle(msg("/status"))
+    assert "3,250 of 10,000" in tg.texts()[-1]

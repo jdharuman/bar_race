@@ -28,11 +28,12 @@ race,,https://www.youtube.com/watch?v=gyHSFZ4fIh4,
 
 | column | meaning |
 |---|---|
-| `style` | `race` (bar chart race), `pillars` (3D pillar walk) or `stocks` (line chart: $1,000 invested in 2–3 companies; title = the companies, e.g. `Apple vs Microsoft vs Nvidia`) |
+| `style` | `race` (bar chart race), `pillars` (3D pillar walk) `stocks` (line chart: $1,000 invested in 2–3 companies; title = the companies, e.g. `Apple vs Microsoft vs Nvidia`) or `compare` (line chart of 2–3 things over time, e.g. `Messi vs Ronaldo career goals`) |
 | `title` | the topic in your words |
 | `youtube_url` | optional reference video; used only to learn the topic, never copied |
 | `comment` | empty for a new topic; for a redo, what was wrong |
-| `look` | optional; `neon` = black background with glowing colours (stocks only), empty = light. Older files without this column still work. |
+| `look` | optional; `neon` = black background with glowing colours (line charts: stocks, compare), empty = light. Older files without this column still work. |
+| `theme` | optional weekly theme: `sports` (Mon), `india` (Tue), `economy` (Wed), `earth` (Thu), `tech` (Fri), `history` (Sat), `people` (Sun). Also the playlist the videos go in. |
 
 The run always takes the **top row**. Reorder rows to change what comes next.
 Finished rows move to `topics_done.csv` with the folder, status, video ids and
@@ -56,6 +57,25 @@ any error.
 Want it now instead of 02:00? In n8n, open "barrace daily video" → "Execute
 workflow", or on the machine:
 `cd ~/barrace && uv run --project automation automation/daily.py run`.
+
+## Nightly slots, weekly themes and the YouTube quota
+
+Each night makes up to **three video pairs**, one per slot, in this order:
+**race**, **pillars**, **lines** (`stocks` or `compare`). Each slot takes the
+first topic of its kind whose `theme` is today's theme, else the first one
+without a theme, else the first one of that kind. A slot with no topic is
+skipped (one Telegram note). The success message names the playlist
+(`Playlist: Sports`); add the videos to it in Studio.
+
+YouTube gives the API project **10,000 units a day** (reset at midnight
+Pacific, 09:00 in Berlin). A pair costs about 3,250 (1,600 per video + 50 for
+the thumbnail), so three pairs fit. The run keeps a ledger in
+`videos/.quota.json` and never starts an upload the day can't cover: the
+video is made, the message says "⏳ upload waiting", and it uploads first
+thing in the next run. Telegram requests use the same day's quota. When
+Google raises the quota, set `BARRACE_QUOTA=<new limit>` in
+`~/.config/barrace/env` and `systemctl --user restart n8n barrace-bot`.
+`/status` in the bot shows today's use.
 
 ## One-off videos from Telegram
 

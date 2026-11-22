@@ -38,7 +38,8 @@ fails visibly and the owner can rephrase the topic.
 `<dir>/topic.json`:
 
 ```json
-{"row": {"style": "race|pillars|stocks", "title": "...", "youtube_url": "...", "comment": "...", "look": "|light|neon"},
+{"row": {"style": "race|pillars|stocks|compare", "title": "...", "youtube_url": "...", "comment": "...",
+         "look": "|light|neon", "theme": "|sports|india|economy|earth|tech|history|people"},
  "redo_of": "/path/to/previous/folder or null", "picked_at": "..."}
 ```
 
@@ -109,6 +110,20 @@ general steps above, then continue with step 3.
    source and say so in the notes.
 4. Yahoo's chart API is unofficial; name it as the source and note that.
 
+### compare (style `compare`): 2–3 things over time, as a line chart
+
+The title names what is compared and the measure (`Messi vs Ronaldo career
+goals`, `Tamil Nadu vs Karnataka GDP`). Use the general steps above (primary
+sources, cross-check, no invented values) and write `data.csv` with one
+`name` per line (2–3 names, at most 6), the same unit for all, yearly
+(`2005`) or monthly (`2005-03`) `year` values. Choose the measure that tells
+the story honestly: cumulative totals for careers ("career goals"), levels
+for economies (GDP, population). Use `rebase` only for growth comparisons
+("growth since 2000, 2000 = 100": `rebase = 100`). Every line must have data
+for the whole period, or say in the notes why one starts later.
+
+`theme` (any style) is the weekly theme/playlist; it needs no extra work.
+
 ## 3. Write the data file
 
 Exact formats are in `README.md` (sections "data.csv", "video.toml",
@@ -166,6 +181,10 @@ reviewed = true       # the owner reviews the finished video instead
   range is long; then set `seconds_per_year` or `[[pace]]` sections (fast
   for sparse early eras, slower for recent decades).
 - pillars: `style = "pillars"`; `seconds_per_pillar` 2.5 (2.0 above 60 rows).
+- compare: `style = "lines"`, title = the comparison, subtitle = the measure
+  and source (`Career goals for club and country (Transfermarkt)`), no
+  `rebase` unless it is a growth comparison; `look = "neon"` when
+  `row.look` is `neon`. Pace for a 2–4 minute main video.
 - stocks: `style = "lines"`, `rebase = 1000`, `unit_prefix = "$"`,
   `number_style = "full"`, title = the companies (`Apple vs Microsoft vs Nvidia`),
   `subtitle = "Value of $1,000 invested in {start}, dividends reinvested (Yahoo Finance)"`.

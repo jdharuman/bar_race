@@ -14,14 +14,27 @@ import sys
 import time
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
-TOPIC_COLS = ["style", "title", "youtube_url", "comment", "look"]  # look: optional
+TOPIC_COLS = ["style", "title", "youtube_url", "comment", "look", "theme"]  # last two optional
 DONE_COLS = TOPIC_COLS + ["finished_at", "folder", "status", "main_video_id",
                           "short_video_id", "error"]
-STYLES = ("race", "pillars", "stocks")
-LOOKS = ("", "light", "neon")  # neon = black background, glowing lines (stocks only)
+STYLES = ("race", "pillars", "stocks", "compare")
+LINE_STYLES = ("stocks", "compare")  # rendered as line charts
+LOOKS = ("", "light", "neon")  # neon = black background, glowing lines (line charts only)
+# Weekly rhythm: each weekday has a theme (also the playlist the videos belong in).
+THEMES = {"sports": "Sports", "india": "India & Tamil Nadu", "economy": "Economy & Stocks",
+          "earth": "Earth & Space", "tech": "Tech & Cars", "history": "History & Countries",
+          "people": "People & World"}
+WEEK = ["sports", "india", "economy", "earth", "tech", "history", "people"]  # Mon..Sun
+# One video pair per slot per night, in this order.
+SLOTS = {"race": ("race",), "pillars": ("pillars",), "lines": LINE_STYLES}
+
+
+def theme_of(day: date) -> str:
+    return WEEK[day.weekday()]
 LOCK_STALE_S = 6 * 3600
 
 
@@ -57,12 +70,15 @@ def write_rows(path: Path, cols: list[str], rows: list[dict]) -> None:
 
 def row_problem(row: dict) -> str | None:
     if row.get("style") not in STYLES:
-        return f"style must be race, pillars or stocks (got {row.get('style')!r})"
+        return f"style must be one of {', '.join(STYLES)} (got {row.get('style')!r})"
     look = row.get("look", "").lower()
     if look not in LOOKS:
         return f"look must be empty, light or neon (got {row.get('look')!r})"
-    if look == "neon" and row.get("style") != "stocks":
-        return "look = neon is only for stocks (line chart) videos"
+    if look == "neon" and row.get("style") not in LINE_STYLES:
+        return "look = neon is only for line charts (stocks, compare)"
+    theme = row.get("theme", "").lower()
+    if theme and theme not in THEMES:
+        return f"theme must be empty or one of {', '.join(THEMES)} (got {row.get('theme')!r})"
     if not row.get("title") and not row.get("youtube_url"):
         return "need a title or a youtube_url"
     if row.get("youtube_url") and not video_id(row["youtube_url"]):
@@ -143,8 +159,8 @@ def release_lock(root: Path) -> None:
 def move_to_done(root: Path, row: dict, **fields) -> None:
     """Remove the first row equal to `row` from topics.csv and append it to topics_done.csv."""
     topics = read_rows(root / "topics.csv")
-    def key(r: dict) -> list[str]:  # look is matched case-blind ("Neon" == "neon")
-        return [r.get(c, "").lower() if c == "look" else r.get(c, "") for c in TOPIC_COLS]
+    def key(r: dict) -> list[str]:  # look/theme are matched case-blind ("Neon" == "neon")
+        return [r.get(c, "").lower() if c in ("style", "look", "theme") else r.get(c, "") for c in TOPIC_COLS]
     for i, r in enumerate(topics):
         if key(r) == key(row):
             del topics[i]
@@ -159,13 +175,28 @@ class Invalid(Exception):
     pass
 
 
-def pick(root: Path, today: date) -> dict:
-    """Start a run on the first topic. Caller must hold the lock."""
+def choose(topics: list[dict], styles=None, theme: str | None = None) -> int | None:
+    """Index of the topic to make: among `styles` (None = any), first today's theme,
+    then a row without theme, then any. None = no topic of these styles."""
+    cands = [i for i, r in enumerate(topics) if styles is None or r.get("style", "").lower() in styles]
+    if not cands:
+        return None
+    if theme:
+        for want in (theme, ""):
+            for i in cands:
+                if topics[i].get("theme", "").lower() == want:
+                    return i
+    return cands[0]
+
+
+def pick(root: Path, today: date, styles=None, theme: str | None = None) -> dict:
+    """Start a run on the chosen topic (default: the first). Caller must hold the lock."""
     topics = read_rows(root / "topics.csv")
-    if not topics:
+    i = choose(topics, styles, theme)
+    if i is None:
         raise LookupError("empty")
-    row = {c: topics[0].get(c, "") for c in TOPIC_COLS}
-    row["look"] = row["look"].lower()
+    row = {c: topics[i].get(c, "") for c in TOPIC_COLS}
+    row["style"], row["look"], row["theme"] = row["style"].lower(), row["look"].lower(), row["theme"].lower()
     if problem := row_problem(row):
         move_to_done(root, row, status="failed", error=f"pick: {problem}")
         raise Invalid(problem)
@@ -320,6 +351,8 @@ def finish(root: Path, d: Path, status: str) -> dict:
     err = (d / "error.txt").read_text().strip() if (d / "error.txt").exists() else ""
     if status == "failed" and not err:
         err = "unknown error (see the n8n execution log)"
+    if status == "waiting":
+        err = ""
     move_to_done(root, row, folder=str(d), status=status, error=err,
                  main_video_id=up.get("main", ""), short_video_id=up.get("short", ""))
     release_lock(root)
@@ -329,9 +362,18 @@ def finish(root: Path, d: Path, status: str) -> dict:
 def report(row: dict, up: dict, status: str, err: str, retry_hint: str, tag: str = "") -> dict:
     name = row["title"] or row["youtube_url"]
     links = {k: studio(up[k]) for k in ("main", "short") if up.get(k)}
+    playlist = THEMES.get(row.get("theme", "").lower())
     if status == "uploaded":
         msg = (f"✅ Ready to review{tag}: {name}\nMain: {links.get('main', '-')}\n"
                f"Short: {links.get('short', '-')}\nWatch both, then publish in YouTube Studio.")
+        if playlist:
+            msg += f"\nPlaylist: {playlist}"
+    elif status == "waiting":
+        msg = (f"⏳ Made, upload waiting for YouTube quota{tag}: {name}\n"
+               "It uploads automatically in the next run after the quota resets "
+               "(midnight Pacific time).")
+        if links:
+            msg += "\nAlready uploaded (private): " + " ".join(links.values())
     else:
         msg = f"❌ FAILED{tag}: {name}\n{err[-1500:]}\n{retry_hint}"
         if links:
@@ -340,8 +382,9 @@ def report(row: dict, up: dict, status: str, err: str, retry_hint: str, tag: str
             "short_url": links.get("short", ""), "error": err, "message": msg}
 
 
-def start(root: Path, today: date) -> tuple[int, dict]:
-    """Lock + pick. Exit codes: 0 picked, 2 invalid row, 3 empty list, 4 locked."""
+def start(root: Path, today: date, slot: str | None = None) -> tuple[int, dict]:
+    """Lock + pick. Exit codes: 0 picked, 2 invalid row, 3 empty list/slot, 4 locked.
+    `slot` (race/pillars/lines) picks that chart type, preferring today's theme."""
     try:
         topics = read_rows(root / "topics.csv")
         read_rows(root / "topics_done.csv")
@@ -349,10 +392,14 @@ def start(root: Path, today: date) -> tuple[int, dict]:
         return 2, {"invalid": str(e), "message": f"❌ barrace did nothing today: {e}"}
     if not topics:
         return 3, {"empty": True, "message": "barrace: topics.csv is empty, nothing to make today."}
-    if not take_lock(root, "daily", topics[0].get("title", "")):
+    styles, theme = (SLOTS[slot], theme_of(today)) if slot else (None, None)
+    i = choose(topics, styles, theme)
+    if i is None:
+        return 3, {"empty": True, "slot": slot}
+    if not take_lock(root, "daily", topics[i].get("title", "")):
         return 4, {"locked": True, "holder": lock_holder(root)}
     try:
-        return 0, pick(root, today)
+        return 0, pick(root, today, styles, theme)
     except Invalid as e:
         release_lock(root)
         return 2, {"invalid": str(e), "message": f"❌ barrace skipped a bad topics.csv row: {e}"}
@@ -360,7 +407,7 @@ def start(root: Path, today: date) -> tuple[int, dict]:
 
 def _upload(root: Path, d: Path) -> None:
     import youtube
-    youtube.upload(d)
+    youtube.upload(d, root)
 
 
 STEPS = [("research", research), ("render", render), ("upload", _upload)]
@@ -387,10 +434,54 @@ REQUEST_WAIT_S = 6 * 3600  # a Telegram request waits this long for a running vi
 
 
 def run_all(root: Path, today: date, steps=None, notify=send_telegram,
-            sleep=time.sleep, wait_s: int = DAILY_WAIT_S) -> int:
+            sleep=time.sleep, wait_s: int = DAILY_WAIT_S, slots=None) -> int:
+    """The nightly run: first held uploads, then one video pair per slot.
+    Exit codes: 0 ok (incl. skipped slots), 1 a step failed, 2 bad topics, 3 empty, 4 locked."""
+    steps = STEPS if steps is None else steps
+    try:
+        topics = read_rows(root / "topics.csv")
+    except BadFile as e:
+        notify(f"❌ barrace did nothing today: {e}")
+        return 2
+    if not topics:
+        notify("barrace: topics.csv is empty, nothing to make today.")
+        return 3
+    reject_bad_rows(root, notify)
+    upload_fn = dict(steps).get("upload")
+    if upload_fn:
+        upload_waiting(root, upload_fn, notify)
+    codes, skipped = [], []
+    for slot in (list(SLOTS) if slots is None else slots):
+        code = run_slot(root, today, slot, steps, notify, sleep, wait_s)
+        if code == 3:
+            skipped.append(slot)
+        else:
+            codes.append(code)
+    if skipped and codes:
+        notify(f"barrace: no {' / '.join(skipped)} topic in topics.csv "
+               f"(today's theme: {THEMES[theme_of(today)]}); add some to fill those slots.")
+    if not codes:
+        notify("barrace: no topic for any slot in topics.csv, nothing made today.")
+        return 3
+    for c in (1, 2, 4):
+        if c in codes:
+            return c
+    return 0
+
+
+def reject_bad_rows(root: Path, notify) -> None:
+    """Move unusable topics.csv rows to topics_done.csv (failed) so none sits there unseen."""
+    for r in read_rows(root / "topics.csv"):
+        row = {c: r.get(c, "") for c in TOPIC_COLS}
+        if problem := row_problem({**row, "style": row["style"].lower()}):
+            move_to_done(root, row, status="failed", error=f"pick: {problem}")
+            notify(f"❌ barrace skipped a bad topics.csv row ({row['title'] or row['youtube_url']}): {problem}")
+
+
+def run_slot(root: Path, today: date, slot: str, steps, notify, sleep, wait_s: int) -> int:
     waited = 0
     while True:
-        code, payload = start(root, today)
+        code, payload = start(root, today, slot)
         busy_with_request = code == 4 and (payload.get("holder") or {}).get("kind") == "request"
         if not busy_with_request or waited >= wait_s:
             break
@@ -404,8 +495,7 @@ def run_all(root: Path, today: date, steps=None, notify=send_telegram,
                    f"running after {wait_s // 3600} h.")
         return code
     d = Path(payload["dir"])
-    return run_steps(root, d, STEPS if steps is None else steps, notify,
-                     lambda status: finish(root, d, status))
+    return run_steps(root, d, steps, notify, lambda status: finish(root, d, status))
 
 
 def run_steps(root: Path, d: Path, steps, notify, finish_fn) -> int:
@@ -413,12 +503,96 @@ def run_steps(root: Path, d: Path, steps, notify, finish_fn) -> int:
         marker = d / f".ok-{name}"
         if marker.exists():  # finished in an earlier, failed run of this folder
             continue
+        (d / QUOTA_WAIT).unlink(missing_ok=True)
         if run_step(name, d, lambda: fn(root, d)):
+            if (d / QUOTA_WAIT).exists():  # not a failure: the upload is held for quota
+                (d / "error.txt").unlink(missing_ok=True)
+                notify(finish_fn("waiting")["message"])
+                return 0
             notify(finish_fn("failed")["message"])
             return 1
         marker.touch()
     notify(finish_fn("uploaded")["message"])
     return 0
+
+
+# ---- YouTube quota (10,000 units/day per API project, reset at midnight Pacific) ----
+
+QUOTA_WAIT = ".quota-wait"   # marker: the upload step stopped for quota, not an error
+COST_VIDEO, COST_THUMB = 1600, 50
+
+
+def quota_day(now: datetime | None = None) -> str:
+    return (now or datetime.now(ZoneInfo("America/Los_Angeles"))).astimezone(
+        ZoneInfo("America/Los_Angeles")).date().isoformat()
+
+
+class Quota:
+    """Units spent today, in videos/.quota.json. Limit: BARRACE_QUOTA (default 10,000);
+    raise it when Google grants more."""
+
+    def __init__(self, root: Path, limit: int | None = None, day: str | None = None):
+        self.path = root / "videos" / ".quota.json"
+        self.limit = limit if limit is not None else int(os.environ.get("BARRACE_QUOTA", "10000"))
+        self.day = day or quota_day()
+        try:
+            st = json.loads(self.path.read_text())
+        except (FileNotFoundError, ValueError):
+            st = {}
+        self.used = st.get("used", 0) if st.get("day") == self.day else 0
+
+    def left(self) -> int:
+        return self.limit - self.used
+
+    def spend(self, units: int) -> None:
+        self.used += units
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps({"day": self.day, "used": self.used}))
+
+
+def append_done(root: Path, log: str, row: dict, **fields) -> None:
+    done = read_rows(root / log)
+    done.append({**row, "finished_at": datetime.now().isoformat(timespec="seconds"), **fields})
+    write_rows(root / log, DONE_COLS, done)
+
+
+def upload_waiting(root: Path, upload_fn, notify) -> None:
+    """Upload videos held for quota on an earlier day (oldest first)."""
+    waiting = []
+    for log in ("topics_done.csv", REQUESTS_DONE):
+        try:
+            rows = read_rows(root / log)
+        except BadFile:
+            continue
+        latest = {}
+        for r in rows:
+            latest[r.get("folder", "")] = r
+        waiting += [(log, r) for f, r in latest.items() if f and r.get("status") == "waiting"]
+    if not waiting or not take_lock(root, "daily", "held uploads"):
+        return
+    try:
+        for log, r in waiting:
+            d = Path(r["folder"])
+            if not (d / "topic.json").exists():
+                continue
+            row = json.loads((d / "topic.json").read_text())["row"]
+            (d / QUOTA_WAIT).unlink(missing_ok=True)
+            tag = " (Telegram request)" if log == REQUESTS_DONE else ""
+            if run_step("upload", d, lambda: upload_fn(root, d)):
+                if (d / QUOTA_WAIT).exists():
+                    (d / "error.txt").unlink(missing_ok=True)
+                    return  # still no quota: the rest waits too
+                err = (d / "error.txt").read_text().strip()
+                append_done(root, log, row, folder=str(d), status="failed", error=err)
+                notify(report(row, {}, "failed", err, "The video is made; run the upload step by hand.", tag)["message"])
+                continue
+            (d / ".ok-upload").touch()
+            up = json.loads((d / "upload.json").read_text()) if (d / "upload.json").exists() else {}
+            append_done(root, log, row, folder=str(d), status="uploaded", error="",
+                        main_video_id=up.get("main", ""), short_video_id=up.get("short", ""))
+            notify(report(row, up, "uploaded", "", "", tag)["message"])
+    finally:
+        release_lock(root)
 
 
 # ---- one-off videos requested from the Telegram bot (never touch topics.csv) ----
@@ -446,6 +620,8 @@ def finish_request(root: Path, d: Path, status: str) -> dict:
     err = (d / "error.txt").read_text().strip() if (d / "error.txt").exists() else ""
     if status == "failed" and not err:
         err = "unknown error (see the request log in videos/.requests/)"
+    if status == "waiting":
+        err = ""
     done = read_rows(root / REQUESTS_DONE)
     done.append({**row, "finished_at": datetime.now().isoformat(timespec="seconds"),
                  "folder": str(d), "status": status, "error": err,

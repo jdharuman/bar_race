@@ -24,7 +24,8 @@ import daily  # noqa: E402
 
 ROOT = Path(os.environ.get("BARRACE_REPO") or Path(__file__).resolve().parent.parent)
 MAX_TITLE, MAX_COMMENT = 100, 500
-STYLE_BUTTONS = [("Race chart", "style:race"), ("Pillars", "style:pillars"), ("Stocks", "style:stocks")]
+STYLE_BUTTONS = [("Race chart", "style:race"), ("Pillars", "style:pillars"),
+                 ("Stocks", "style:stocks"), ("Compare", "style:compare")]
 
 
 def companies(text: str) -> list[str]:
@@ -67,7 +68,8 @@ SKIP = buttons([("Skip", "skip")])
 
 
 def summary(r: dict) -> str:
-    look = f"\nLook: {'black neon' if r.get('look') == 'neon' else 'light'}" if r["style"] == "stocks" else ""
+    look = (f"\nLook: {'black neon' if r.get('look') == 'neon' else 'light'}"
+            if r["style"] in daily.LINE_STYLES else "")
     return (f"Style: {r['style']}\nTitle: {r['title']}{look}\n"
             f"YouTube hint: {r['youtube_url'] or '–'}\nNotes: {r['comment'] or '–'}")
 
@@ -140,7 +142,10 @@ class Bot:
                 f"({'Telegram request' if h.get('kind') == 'request' else 'daily video'}, "
                 f"since {h.get('since', '?')[11:16]})") if h else "Idle: no video being made."
         n = daily.runs_today(self.root, self.today())
-        return f"{busy}\nFinished today: {n} (YouTube allows about 3 a day)."
+        q = daily.Quota(self.root)
+        return (f"{busy}\nFinished today: {n}\n"
+                f"YouTube quota today: {q.used:,} of {q.limit:,} units used "
+                f"(a video pair needs about {2 * daily.COST_VIDEO + daily.COST_THUMB:,}).")
 
     # -- form --
     def on_button(self, chat: int, data: str) -> None:
@@ -159,6 +164,9 @@ class Bot:
             if r["style"] == "stocks":
                 self.say(chat, "Which companies? 2 or 3, e.g. Apple vs Microsoft vs Nvidia\n"
                                "(shows what $1,000 invested in each would be worth, since all were listed)")
+            elif r["style"] == "compare":
+                self.say(chat, "What to compare over time? 2–3 things and the measure, e.g.\n"
+                               "Messi vs Ronaldo career goals, or Tamil Nadu vs Karnataka GDP")
             else:
                 self.say(chat, f"Title? (up to {MAX_TITLE} characters)\n"
                                "e.g. Most Visited Countries in the World")
@@ -194,7 +202,7 @@ class Bot:
                     return
                 text = " vs ".join(names)
             r["title"] = text
-            if r["style"] == "stocks":
+            if r["style"] in daily.LINE_STYLES:
                 form["step"] = "look"
                 self.say(chat, "Look?", buttons([("⬛ Black neon", "look:neon"), ("⬜ Light", "look:light")]))
             else:
