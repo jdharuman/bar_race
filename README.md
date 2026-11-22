@@ -161,3 +161,32 @@ records each licence. Photos of people are often copyrighted and a common
 cause of takedowns. A row without an image gets an initials tile.
 
 Example: `weeks/2026-11-30-tallest-buildings/`.
+
+## Line chart (style = "lines")
+
+A third style: a few series (1–6) drawn as lines growing left to right, a
+circle and `Name  value` label at each line's head, the y-axis rising as the
+values grow. The daily `stocks` topics use it for "value of $1,000 invested"
+comparisons. Data is a normal `data.csv` (one `name` per line, monthly
+`year` values work best). In `video.toml`:
+
+```toml
+title = "Apple vs Microsoft vs Nvidia"
+subtitle = "Value of $1,000 invested in {start}, dividends reinvested (Yahoo Finance)"
+style = "lines"
+rebase = 1000          # optional: every line starts at 1,000 at the first shown month
+unit_prefix = "$"
+seconds_per_year = 6
+reviewed = true
+```
+
+- `rebase`: each line is drawn as `rebase × value / value at the start`, so
+  `data.csv` keeps the raw (adjusted) prices and stays checkable. With
+  `rebase`, every name must have a value > 0 at the first month.
+- `{start}` in `title`/`subtitle` becomes the first month the video shows.
+  The Short may start later than the data (it trims long histories); it is
+  rebased there too, so its subtitle stays true.
+- Line colours come from a fixed high-contrast palette (override per name
+  or category with `[colors]`). Images, if given, appear in the head circles.
+- `events.csv` captions appear top-left of the chart (below it in the Short).
+- Bar-race settings (`top_n`, `--bars`, `thumb --year`) are ignored.

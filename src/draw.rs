@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use tiny_skia::{Color, FillRule, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 
-const PALETTE: [&str; 12] = [
+pub(crate) const PALETTE: [&str; 12] = [
     "#38bdf8", "#f472b6", "#facc15", "#4ade80", "#fb923c", "#a78bfa", "#f87171", "#2dd4bf", "#e879f9", "#a3e635",
     "#60a5fa", "#fbbf24",
 ];
@@ -22,7 +22,7 @@ pub fn hex(s: &str) -> Color {
     Color::from_rgba8(c(0), c(2), c(4), 255)
 }
 
-fn with_alpha(mut c: Color, a: f32) -> Color {
+pub(crate) fn with_alpha(mut c: Color, a: f32) -> Color {
     c.set_alpha((c.alpha() * a).clamp(0.0, 1.0));
     c
 }
@@ -138,7 +138,7 @@ impl Painter {
         }
     }
 
-    fn paint_caption(&mut self, pm: &mut Pixmap, i: usize, a: f32) {
+    pub fn paint_caption(&mut self, pm: &mut Pixmap, i: usize, a: f32) {
         let Some(ev) = self.events.get(i).cloned() else { return };
         let b @ (x, y, w, h) = self.layout.caption_box();
         self.panel(pm, b, a);
@@ -506,7 +506,7 @@ fn bar_width(l: &Layout, value: f64, axis_max: f64) -> f32 {
 }
 
 /// Up to two initials from the first letters of the name's words.
-fn initials(name: &str) -> String {
+pub(crate) fn initials(name: &str) -> String {
     name.split_whitespace().filter_map(|w| w.chars().next()).take(2).flat_map(char::to_uppercase).collect()
 }
 
@@ -552,7 +552,7 @@ pub fn dominant_color(img: &image::RgbaImage) -> Option<[u8; 3]> {
 }
 
 /// Load an image, crop to a centred square, scale to d×d and cut to a circle (premultiplied).
-fn load_circle_image(path: &Path, d: u32) -> Result<Pixmap> {
+pub(crate) fn load_circle_image(path: &Path, d: u32) -> Result<Pixmap> {
     let img = image::open(path)?.resize_to_fill(d, d, image::imageops::FilterType::Lanczos3).to_rgba8();
     let mut square = Pixmap::new(d, d).unwrap();
     for (dst, src) in square.pixels_mut().iter_mut().zip(img.pixels()) {
@@ -667,7 +667,7 @@ pub fn label_color_on(bar: Color) -> Color {
 }
 
 /// Thin outline so white parts of a flag stay visible on a light background.
-fn ring(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, color: Color) {
+pub(crate) fn ring(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, color: Color) {
     let mut paint = Paint::default();
     paint.set_color(color);
     paint.anti_alias = true;

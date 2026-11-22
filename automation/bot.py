@@ -10,6 +10,7 @@ Text typed into the bot is data for the research step, never instructions
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -23,7 +24,13 @@ import daily  # noqa: E402
 
 ROOT = Path(os.environ.get("BARRACE_REPO") or Path(__file__).resolve().parent.parent)
 MAX_TITLE, MAX_COMMENT = 100, 500
-STYLE_BUTTONS = [("Race chart", "style:race"), ("Pillars", "style:pillars")]
+STYLE_BUTTONS = [("Race chart", "style:race"), ("Pillars", "style:pillars"), ("Stocks", "style:stocks")]
+
+
+def companies(text: str) -> list[str]:
+    """'Apple vs Microsoft, Nvidia' -> ['Apple', 'Microsoft', 'Nvidia']."""
+    parts = re.split(r"\s+vs\.?\s+|\s*,\s*|\s+and\s+|\s+&\s+", text, flags=re.I)
+    return [p.strip() for p in parts if p.strip()]
 REPORTED = (0, 1, 2, 4, 70)  # exit codes after which `daily.py request` already sent a message
 
 HELP = ("barrace bot\n"
@@ -148,8 +155,12 @@ class Bot:
         if step == "style" and data in [d for _, d in STYLE_BUTTONS]:
             r["style"] = data.split(":")[1]
             form["step"] = "title"
-            self.say(chat, f"Title? (up to {MAX_TITLE} characters)\n"
-                           "e.g. Most Visited Countries in the World")
+            if r["style"] == "stocks":
+                self.say(chat, "Which companies? 2 or 3, e.g. Apple vs Microsoft vs Nvidia\n"
+                               "(shows what $1,000 invested in each would be worth, since all were listed)")
+            else:
+                self.say(chat, f"Title? (up to {MAX_TITLE} characters)\n"
+                               "e.g. Most Visited Countries in the World")
         elif step == "url" and data == "skip":
             self.ask_comment(chat, form)
         elif step == "comment" and data == "skip":
@@ -171,6 +182,12 @@ class Bot:
             if not text or len(text) > MAX_TITLE:
                 self.say(chat, f"The title must be 1–{MAX_TITLE} characters. Try again.")
                 return
+            if r["style"] == "stocks":
+                names = companies(text)
+                if not 2 <= len(names) <= 3:
+                    self.say(chat, "Give 2 or 3 companies, e.g. Apple vs Microsoft vs Nvidia.")
+                    return
+                text = " vs ".join(names)
             r["title"] = text
             form["step"] = "url"
             self.say(chat, "YouTube link as a topic hint? (optional; only the topic is used, "

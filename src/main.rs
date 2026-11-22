@@ -6,6 +6,7 @@ mod encode;
 mod events;
 mod fmt;
 mod layout;
+mod lines;
 mod pillars;
 mod render;
 mod scene;

@@ -168,3 +168,20 @@ def test_dash_title_reaches_daily_cli_intact(tmp_path):
     ns, _ = parsed.parse_known_args(started[0])
     assert ns.title == "-40 C Coldest Cities" and ns.comment == "--help is not an option here"
 
+
+def test_stocks_form_normalises_companies(tmp_path):
+    b, tg, started = make(tmp_path)
+    fill(b, msg("/new"))
+    assert "style:stocks" in tg.last_buttons()
+    fill(b, tap("style:stocks"))
+    assert "Which companies" in tg.texts()[-1]
+    fill(b, msg("Apple"))
+    assert "2 or 3" in tg.texts()[-1]
+    fill(b, msg("apple, Microsoft and NVIDIA"), tap("skip"), tap("skip"), tap("go"))
+    assert started[0][:2] == ["--style=stocks", "--title=apple vs Microsoft vs NVIDIA"]
+
+
+def test_companies_split():
+    assert bot.companies("Apple vs. Microsoft & Tesla") == ["Apple", "Microsoft", "Tesla"]
+    assert bot.companies("Coca-Cola VS Pepsi") == ["Coca-Cola", "Pepsi"]
+    assert bot.companies("AT&T vs Verizon") == ["AT&T", "Verizon"]

@@ -33,6 +33,9 @@ pub struct VideoConfig {
     pub bar_colors: BarColors,
     pub reviewed: bool,
     pub colors: BTreeMap<String, String>,
+    /// Line chart: draw each line as `rebase × value / value at the first shown time`
+    /// (e.g. 1000 = "value of $1,000 invested"). None = raw values.
+    pub rebase: Option<f64>,
 }
 
 impl Default for VideoConfig {
@@ -56,6 +59,7 @@ impl Default for VideoConfig {
             bar_colors: Default::default(),
             reviewed: false,
             colors: BTreeMap::new(),
+            rebase: None,
         }
     }
 }
@@ -79,6 +83,9 @@ impl VideoConfig {
         }
         if !(self.seconds_per_pillar > 0.0 && self.seconds_per_pillar <= 30.0) {
             p.push(format!("seconds_per_pillar must be > 0 and ≤ 30 (got {})", self.seconds_per_pillar));
+        }
+        if let Some(r) = self.rebase.filter(|r| !(r.is_finite() && *r > 0.0)) {
+            p.push(format!("rebase must be > 0 (got {r})"));
         }
         let hex6 = |s: &str| s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit());
         if !hex6(&self.pillar_color) {
@@ -122,6 +129,8 @@ pub enum Style {
     Race,
     /// 3D pillar walk (pillars.csv).
     Pillars,
+    /// Animated line chart comparing a few series over time (data.csv).
+    Lines,
 }
 
 /// Pillar colour source in the pillar walk.
@@ -253,6 +262,16 @@ mod tests {
         let c: VideoConfig = toml::from_str("style = \"pillars\"\npillar_colors = \"image\"").unwrap();
         assert_eq!(c.style, Style::Pillars);
         assert_eq!(c.pillar_colors, PillarColors::Image);
+    }
+
+    #[test]
+    fn lines_style_and_rebase_parse() {
+        let c: VideoConfig = toml::from_str("style = \"lines\"\nrebase = 1000").unwrap();
+        assert_eq!(c.style, Style::Lines);
+        assert_eq!(c.rebase, Some(1000.0));
+        assert!(c.problems().is_empty());
+        let bad = VideoConfig { rebase: Some(0.0), ..Default::default() };
+        assert!(bad.problems().join(" ").contains("rebase"));
     }
 
     #[test]

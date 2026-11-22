@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TOPIC_COLS = ["style", "title", "youtube_url", "comment"]
 DONE_COLS = TOPIC_COLS + ["finished_at", "folder", "status", "main_video_id",
                           "short_video_id", "error"]
-STYLES = ("race", "pillars")
+STYLES = ("race", "pillars", "stocks")
 LOCK_STALE_S = 6 * 3600
 
 
@@ -56,7 +56,7 @@ def write_rows(path: Path, cols: list[str], rows: list[dict]) -> None:
 
 def row_problem(row: dict) -> str | None:
     if row.get("style") not in STYLES:
-        return f"style must be race or pillars (got {row.get('style')!r})"
+        return f"style must be race, pillars or stocks (got {row.get('style')!r})"
     if not row.get("title") and not row.get("youtube_url"):
         return "need a title or a youtube_url"
     if row.get("youtube_url") and not video_id(row["youtube_url"]):

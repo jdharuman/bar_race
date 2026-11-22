@@ -42,6 +42,9 @@ pub fn thumb(week_dir: &Path, year: Option<f64>) -> Result<PathBuf> {
     if cfg.style == Style::Pillars {
         return thumb_pillars(week_dir, &cfg);
     }
+    if cfg.style == Style::Lines {
+        return thumb_lines(week_dir, &cfg);
+    }
     let ds = Dataset::load(week_dir)?;
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
     let layout = Layout::landscape(1.0, cfg.top_n);
@@ -187,6 +190,74 @@ fn thumb_pillars(week_dir: &Path, cfg: &VideoConfig) -> Result<PathBuf> {
     save_thumb(&pm, week_dir)
 }
 
+fn render_lines(week_dir: &Path, cfg: &VideoConfig, fmt: Format, opts: &RenderOpts) -> Result<PathBuf> {
+    use crate::lines::{LinePainter, LineTracker};
+    let ds = Dataset::load(week_dir)?;
+    let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
+    let (scale, fps) = if opts.preview { (0.5, 30) } else { (1.0, 60) };
+    let (layout, name) = match fmt {
+        Format::Main => (crate::lines::layout(scale, false), "main.mp4"),
+        Format::Short => (crate::lines::layout(scale, true), "short.mp4"),
+    };
+    let tl = Timeline::new(fmt, cfg, &ds, fps);
+    let cfg = &crate::lines::fill_start(cfg, tl.start, ds.granularity);
+    let (events, ev_errors) = crate::events::parse(week_dir)?;
+    if !ev_errors.is_empty() {
+        bail!("events.csv has errors:\n  {}", ev_errors.join("\n  "));
+    }
+    // the Short may start later than the data: lines rebase at the first shown time
+    let mut tracker = LineTracker::new(&ds, tl.start, tl.end, cfg.rebase);
+    let mut lines = LinePainter::new(&ds, cfg, &ch, layout.clone(), tracker.scales().to_vec())?;
+    let mut cards = Painter::new(&ds, cfg, &ch, layout.clone())?;
+    cards.set_events(events.clone());
+    let mut caption_fade = Crossfade::new(0.3);
+    let out_dir = week_dir.join("out");
+    std::fs::create_dir_all(&out_dir)?;
+    let out = out_dir.join(name);
+    let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
+    let audio = resolve_audio(cfg, week_dir, opts, tl.total_seconds())?;
+    let mut enc = Encoder::start(&out, layout.width, layout.height, fps, audio)?;
+    let total = tl.frame_count();
+    let dt = 1.0 / fps as f64;
+    for f in 0..total {
+        let phase = tl.phase_at(f);
+        let t = match phase {
+            Phase::Intro { .. } => tl.start,
+            Phase::Race { t } => t,
+            Phase::Hold | Phase::End { .. } => tl.end,
+        };
+        let frame = tracker.step(&ds, t, dt);
+        lines.paint(&mut pm, &frame, true);
+        if let Some((i, a)) = caption_fade.step(crate::events::active(&events, t), dt) {
+            cards.paint_caption(&mut pm, i, a);
+        }
+        cards.paint_card(&mut pm, &phase);
+        enc.write_frame(pm.data())?;
+        if total >= 10 && f % (total / 10) == 0 {
+            eprintln!("{name}: {}%", f * 100 / total);
+        }
+    }
+    enc.finish()?;
+    eprintln!("wrote {}", out.display());
+    Ok(out)
+}
+
+/// Line-chart thumbnail: the finished chart (axis settled) under the big title.
+fn thumb_lines(week_dir: &Path, cfg: &VideoConfig) -> Result<PathBuf> {
+    use crate::lines::{LinePainter, LineTracker};
+    let ds = Dataset::load(week_dir)?;
+    let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
+    let layout = crate::lines::layout(1.0, false);
+    let cfg = &crate::lines::fill_start(cfg, ds.first, ds.granularity);
+    let mut tracker = LineTracker::new(&ds, ds.first, ds.last, cfg.rebase);
+    let frame = tracker.step(&ds, ds.last, 1.0);
+    let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
+    LinePainter::new(&ds, cfg, &ch, layout.clone(), tracker.scales().to_vec())?.paint(&mut pm, &frame, false);
+    let fg = crate::draw::hex(&ch.colors().1);
+    Painter::new(&ds, cfg, &ch, layout)?.paint_title_overlay(&mut pm, fg);
+    save_thumb(&pm, week_dir)
+}
+
 pub fn render(week_dir: &Path, fmt: Format, opts: &RenderOpts) -> Result<PathBuf> {
     let preview = opts.preview;
     let cfg = VideoConfig::load(&week_dir.join("video.toml"))?;
@@ -195,6 +266,9 @@ pub fn render(week_dir: &Path, fmt: Format, opts: &RenderOpts) -> Result<PathBuf
     }
     if cfg.style == Style::Pillars {
         return render_pillars(week_dir, &cfg, fmt, opts);
+    }
+    if cfg.style == Style::Lines {
+        return render_lines(week_dir, &cfg, fmt, opts);
     }
     let ds = Dataset::load(week_dir)?;
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;

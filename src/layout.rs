@@ -20,6 +20,8 @@ pub struct Layout {
     pub portrait: bool,
     pub watermark_pos: (f32, f32),
     pub watermark_size: f32,
+    /// Overrides `caption_box` (the line chart puts captions elsewhere).
+    pub caption_at: Option<(f32, f32, f32, f32)>,
 }
 
 impl Layout {
@@ -42,6 +44,7 @@ impl Layout {
             portrait: false,
             watermark_pos: (0.95 * w, 0.965 * h),
             watermark_size: 0.02 * h,
+            caption_at: None,
         }
     }
 
@@ -64,6 +67,7 @@ impl Layout {
             portrait: true,
             watermark_pos: (0.94 * w, 0.865 * h),
             watermark_size: 0.013 * h,
+            caption_at: None,
         }
     }
 
@@ -85,6 +89,9 @@ impl Layout {
 
     /// Fact caption area (x, y, w, h).
     pub fn caption_box(&self) -> (f32, f32, f32, f32) {
+        if let Some(b) = self.caption_at {
+            return b;
+        }
         let (w, h) = self.wh();
         if self.portrait {
             (0.60 * w, 0.50 * h, 0.36 * w, 0.11 * h)

@@ -28,7 +28,7 @@ race,,https://www.youtube.com/watch?v=gyHSFZ4fIh4,
 
 | column | meaning |
 |---|---|
-| `style` | `race` (bar chart race) or `pillars` (3D pillar walk) |
+| `style` | `race` (bar chart race), `pillars` (3D pillar walk) or `stocks` (line chart: $1,000 invested in 2–3 companies; title = the companies, e.g. `Apple vs Microsoft vs Nvidia`) |
 | `title` | the topic in your words |
 | `youtube_url` | optional reference video; used only to learn the topic, never copied |
 | `comment` | empty for a new topic; for a redo, what was wrong |
