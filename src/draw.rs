@@ -607,7 +607,7 @@ pub fn end_state(t: f64) -> EndState {
     EndState { pop, liked: t >= 0.35, subscribed: t >= 0.55, bell_angle, cursor }
 }
 
-fn fill_path(pm: &mut Pixmap, path: &tiny_skia::Path, c: Color) {
+pub(crate) fn fill_path(pm: &mut Pixmap, path: &tiny_skia::Path, c: Color) {
     let mut paint = Paint::default();
     paint.set_color(c);
     paint.anti_alias = true;
@@ -678,7 +678,7 @@ pub(crate) fn ring(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, color: Color) {
 }
 
 /// Rectangle with all four corners rounded by r.
-fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
+pub(crate) fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
     const K: f32 = 0.552_284_8;
     let mut pb = PathBuilder::new();
     pb.move_to(x + r, y);

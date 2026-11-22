@@ -31,8 +31,10 @@ THEMES = {"sports": "Sports", "india": "India & Tamil Nadu", "economy": "Economy
           "earth": "Earth & Space", "tech": "Tech & Cars", "history": "History & Countries",
           "people": "People & World"}
 WEEK = ["sports", "india", "economy", "earth", "tech", "history", "people"]  # Mon..Sun
-# One video pair per slot per night, in this order.
-SLOTS = {"race": ("race",), "pillars": ("pillars",), "lines": LINE_STYLES}
+# One video pair per slot per night, in this order. The quiz slot (a Short only) runs
+# only when the YouTube quota covers it (see quiz_slot_on).
+SLOTS = {"race": ("race",), "pillars": ("pillars",), "lines": LINE_STYLES, "quiz": ("quiz",)}
+QUIZ_MIN_QUOTA = 11400  # 3 pairs (~9,750 units) + one Short (1,600)
 
 
 def theme_of(day: date) -> str:
@@ -83,8 +85,12 @@ def row_problem(row: dict) -> str | None:
         return f"theme must be empty or one of {', '.join(THEMES)} (got {row.get('theme')!r})"
     if not row.get("title") and not row.get("youtube_url"):
         return "need a title or a youtube_url"
-    if row.get("style") == "quiz" and not row.get("title", "").lower().startswith("guess the"):
-        return "a quiz title starts with 'Guess the' (e.g. 'Guess the Flag: Europe #3')"
+    if row.get("style") == "quiz":
+        import quiz
+        try:
+            quiz.parse_title(row.get("title", ""))
+        except quiz.QuizError as e:
+            return str(e)
     if row.get("youtube_url") and not video_id(row["youtube_url"]):
         return f"not a YouTube video link: {row['youtube_url']}"
     return None
@@ -306,7 +312,29 @@ def snapshot(root: Path) -> dict:
     return files
 
 
+def is_quiz(d: Path) -> bool:
+    try:
+        return json.loads((d / "topic.json").read_text())["row"].get("style") == "quiz"
+    except (FileNotFoundError, ValueError, KeyError):
+        return False
+
+
+def make_quiz(root: Path, d: Path, run=subprocess.run) -> None:
+    """Quiz rows skip Claude: the questions come from bundled, sourced data."""
+    import quiz
+    title = json.loads((d / "topic.json").read_text())["row"]["title"]
+    try:
+        quiz.generate(root, d, title)
+    except quiz.QuizError as e:
+        raise StepError(str(e)) from e
+    v = run([barrace_bin(root), "validate", str(d)], cwd=root, capture_output=True, text=True)
+    if v.returncode != 0:
+        raise StepError(f"barrace validate failed\n{_tail(v.stdout + (v.stderr or ''))}")
+
+
 def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
+    if is_quiz(d):
+        return make_quiz(root, d, run)
     cmd = claude_cmd(d, root)
     # ponytail: env scrub + path-scoped writes + tripwire; `uv run` can still run any
     # Python as this user. Real boundary = Claude Code sandbox or a separate unix user.
@@ -346,7 +374,9 @@ def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
 
 def render(root: Path, d: Path, run=subprocess.run) -> None:
     bb = barrace_bin(root)
-    for cmd in ([bb, "render", str(d), "--format", "both"], [bb, "thumb", str(d)]):
+    cmds = ([[bb, "render", str(d), "--format", "short"]] if is_quiz(d) else
+            [[bb, "render", str(d), "--format", "both"], [bb, "thumb", str(d)]])
+    for cmd in cmds:
         r = run(cmd, cwd=root, capture_output=True, text=True)
         if r.returncode != 0:
             raise StepError(f"{' '.join(cmd[1:2])} exited {r.returncode}\n"
@@ -392,7 +422,10 @@ def report(row: dict, up: dict, status: str, err: str, retry_hint: str, tag: str
     name = row["title"] or row["youtube_url"]
     links = {k: studio(up[k]) for k in ("main", "short") if up.get(k)}
     playlist = THEMES.get(row.get("theme", "").lower())
-    if status == "uploaded":
+    if status == "uploaded" and row.get("style") == "quiz":
+        msg = (f"✅ Ready to review{tag}: {name}\nShort: {links.get('short', '-')}\n"
+               "Watch it, then publish in YouTube Studio.")
+    elif status == "uploaded":
         msg = (f"✅ Ready to review{tag}: {name}\nMain: {links.get('main', '-')}\n"
                f"Short: {links.get('short', '-')}\nWatch both, then publish in YouTube Studio.")
         if playlist:
@@ -480,7 +513,9 @@ def run_all(root: Path, today: date, steps=None, notify=send_telegram,
     if upload_fn:
         upload_waiting(root, upload_fn, notify)
     codes, skipped = [], []
-    for slot in (list(SLOTS) if slots is None else slots):
+    if slots is None:
+        slots = [s for s in SLOTS if s != "quiz" or quiz_slot_on(root)]
+    for slot in slots:
         code = run_slot(root, today, slot, steps, notify, sleep, wait_s)
         if code == 3:
             skipped.append(slot)
@@ -496,6 +531,14 @@ def run_all(root: Path, today: date, steps=None, notify=send_telegram,
         if c in codes:
             return c
     return 0
+
+
+def quiz_slot_on(root: Path) -> bool:
+    """BARRACE_QUIZ=on/off forces it; default: on once the daily quota covers it."""
+    force = os.environ.get("BARRACE_QUIZ", "").lower()
+    if force in ("on", "off"):
+        return force == "on"
+    return Quota(root).limit >= QUIZ_MIN_QUOTA
 
 
 def reject_bad_rows(root: Path, notify) -> None:

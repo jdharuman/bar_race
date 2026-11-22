@@ -77,12 +77,40 @@ Google raises the quota, set `BARRACE_QUOTA=<new limit>` in
 `~/.config/barrace/env` and `systemctl --user restart n8n barrace-bot`.
 `/status` in the bot shows today's use.
 
+**Quiz slot (4th, Short only).** A `quiz` row makes one 9:16 Short (no main
+video, no custom thumbnail: 1,600 units). The slot runs only when
+`BARRACE_QUOTA` is at least 11,400 (three pairs + one Short), so it switches
+on by itself once the raised quota is in the env file. `BARRACE_QUIZ=on`
+or `off` in the env file forces it either way.
+
+## Flag and capital quizzes
+
+A row `quiz,"Guess the Flag: Europe #3"` needs no research and no Claude:
+`automation/quiz.py` builds 10 questions from `automation/quiz_data/`
+(Wikidata, CC0; see its README) and downloads the flags from flagcdn.com
+(public domain, cached in `videos/flagcache/`). Each question shows the flag
+(or the country / state name), four answers and a 3-second countdown ring;
+then the answer turns green with a one-line fact (the capital). The Short
+ends with "comment your score". Length about 56 s.
+
+Titles: `Guess the Flag: <set> #<n>` with set Europe, Asia, Africa, Americas,
+Oceania and Islands, World Mix, Easy Mode, Hard Mode or Look-Alikes, and
+`Guess the Capital: <set> #<n>` with World, Europe, Asia, Africa or Indian
+States. `#n` walks through a fixed order of the set, so #1, #2, … show every
+country once before any repeats; the same title always gives the same quiz.
+A title outside these sets is rejected when the run starts. To make one by
+hand (from the repo root):
+
+```sh
+(cd automation && uv run python -c "import quiz, pathlib; quiz.generate(pathlib.Path('..'), pathlib.Path('../videos/x'), 'Guess the Flag: Asia #1')")
+target/release/barrace render videos/x --format short
+```
+
 ## The topic plan and the weekly trend scout
 
 `topics.plan.csv` (in git) is a full year: about 370 topics each for race,
 pillars and line charts, 53 per weekly theme, plus 365 quiz rows (`Guess the
-Flag: Europe #3` …; the quiz slot switches on with the quiz renderer and
-enough quota). Setup copies it to `topics.csv`; after that `topics.csv` is the
+Flag: Europe #3` …; made by the quiz slot once the quota allows, see above). Setup copies it to `topics.csv`; after that `topics.csv` is the
 live queue (edit it freely).
 
 **Trend scout:** every Monday 08:00 the n8n workflow "barrace weekly trend

@@ -162,6 +162,12 @@ cause of takedowns. A row without an image gets an initials tile.
 
 Example: `weeks/2026-11-30-tallest-buildings/`.
 
+## Quiz Short (style = "quiz")
+
+A 9:16 flag / capital quiz, made from `quiz.csv` (`image,prompt,a,b,c,d,answer,fact`,
+answer = 1–4) by `automation/quiz.py`; see `docs/automation.md`. Render with
+`--format short` (there is no main video or thumbnail).
+
 ## Line chart (style = "lines")
 
 A third style: a few series (1–6) drawn as lines growing left to right, a

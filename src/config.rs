@@ -135,6 +135,8 @@ pub enum Style {
     Pillars,
     /// Animated line chart comparing a few series over time (data.csv).
     Lines,
+    /// Flag / capital quiz Short (quiz.csv, made by automation/quiz.py).
+    Quiz,
 }
 
 /// Visual look of the line chart.

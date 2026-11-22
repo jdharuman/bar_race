@@ -45,6 +45,9 @@ pub fn thumb(week_dir: &Path, year: Option<f64>) -> Result<PathBuf> {
     if cfg.style == Style::Lines {
         return thumb_lines(week_dir, &cfg);
     }
+    if cfg.style == Style::Quiz {
+        bail!("quiz videos are Shorts only: YouTube picks the Short's thumbnail");
+    }
     let ds = Dataset::load(week_dir)?;
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
     let layout = Layout::landscape(1.0, cfg.top_n);
@@ -271,6 +274,12 @@ pub fn render(week_dir: &Path, fmt: Format, opts: &RenderOpts) -> Result<PathBuf
     }
     if cfg.style == Style::Lines {
         return render_lines(week_dir, &cfg, fmt, opts);
+    }
+    if cfg.style == Style::Quiz {
+        if fmt == Format::Main {
+            bail!("quiz videos are Shorts only: render with --format short");
+        }
+        return crate::quiz::render(week_dir, &cfg, preview, |secs| resolve_audio(&cfg, week_dir, opts, secs));
     }
     let ds = Dataset::load(week_dir)?;
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;

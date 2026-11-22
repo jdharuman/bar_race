@@ -8,6 +8,7 @@ mod fmt;
 mod layout;
 mod lines;
 mod pillars;
+mod quiz;
 mod render;
 mod scene;
 mod text;
@@ -86,6 +87,8 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             println!("items: {}", r.items);
             if r.style == config::Style::Pillars {
                 println!("pillars: {}", r.items);
+            } else if r.style == config::Style::Quiz {
+                println!("questions: {}", r.items);
             } else {
                 println!("time: {}–{}", fmt::format_time(r.first, r.granularity), fmt::format_time(r.last, r.granularity));
             }

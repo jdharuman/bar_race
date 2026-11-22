@@ -26,6 +26,7 @@ pub fn run(week_dir: &Path) -> Result<Report> {
     let pillars_files = week_dir.join("pillars.csv").exists() && !week_dir.join("data.csv").exists();
     match &cfg {
         Some(c) if c.style == Style::Pillars => return run_pillars(week_dir, c.clone(), vec![]),
+        Some(c) if c.style == Style::Quiz => return run_quiz(week_dir, c.reviewed),
         None if pillars_files => return run_pillars(week_dir, VideoConfig::default(), cfg_err.into_iter().collect()),
         _ => {}
     }
@@ -64,6 +65,21 @@ pub fn run(week_dir: &Path) -> Result<Report> {
         estimated_share: ds.estimated_share(),
         reviewed,
         style,
+    })
+}
+
+fn run_quiz(week_dir: &Path, reviewed: bool) -> Result<Report> {
+    let (qs, errors) = crate::quiz::load(week_dir)?;
+    Ok(Report {
+        errors,
+        warnings: Vec::new(),
+        items: qs.len(),
+        first: 0.0,
+        last: 0.0,
+        granularity: crate::data::Granularity::Year,
+        estimated_share: 0.0,
+        reviewed,
+        style: Style::Quiz,
     })
 }
 

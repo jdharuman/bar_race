@@ -1,0 +1,198 @@
+iso2,name,capital,capital_quiz,region,easy,island,lookalike
+ad,Andorra,Andorra la Vella,1,europe,0,0,1
+ae,United Arab Emirates,Abu Dhabi,1,asia,1,0,11
+af,Afghanistan,Kabul,1,asia,0,0,
+ag,Antigua and Barbuda,St. John's,1,americas,0,1,
+al,Albania,Tirana,1,europe,0,0,
+am,Armenia,Yerevan,1,asia,0,0,
+ao,Angola,Luanda,1,africa,0,0,
+ar,Argentina,Buenos Aires,1,americas,1,0,9
+at,Austria,Vienna,1,europe,1,0,10
+au,Australia,Canberra,1,oceania,1,1,3
+az,Azerbaijan,Baku,1,asia,0,0,
+ba,Bosnia and Herzegovina,Sarajevo,1,europe,0,0,
+bb,Barbados,Bridgetown,1,americas,0,1,
+bd,Bangladesh,Dhaka,1,asia,1,0,
+be,Belgium,Brussels,1,europe,1,0,18
+bf,Burkina Faso,Ouagadougou,1,africa,0,0,
+bg,Bulgaria,Sofia,1,europe,0,0,
+bh,Bahrain,Manama,1,asia,0,1,17
+bi,Burundi,Gitega,1,africa,0,0,
+bj,Benin,Porto-Novo,1,africa,0,0,
+bn,Brunei,Bandar Seri Begawan,1,asia,0,1,
+bo,Bolivia,Sucre / La Paz,0,americas,0,0,13
+br,Brazil,Brasília,1,americas,1,0,
+bs,Bahamas,Nassau,1,americas,0,1,
+bt,Bhutan,Thimphu,1,asia,0,0,
+bw,Botswana,Gaborone,1,africa,0,0,
+by,Belarus,Minsk,1,europe,0,0,
+bz,Belize,Belmopan,1,americas,0,0,
+ca,Canada,Ottawa,1,americas,1,0,19
+cd,Democratic Republic of the Congo,Kinshasa,1,africa,0,0,
+cf,Central African Republic,Bangui,1,africa,0,0,
+cg,Republic of the Congo,Brazzaville,1,africa,0,0,
+ch,Switzerland,Bern,1,europe,1,0,
+ci,Ivory Coast,Yamoussoukro,1,africa,0,0,4
+cl,Chile,Santiago,1,americas,1,0,20
+cm,Cameroon,Yaoundé,1,africa,0,0,7
+cn,China,Beijing,1,asia,1,0,
+co,Colombia,Bogotá,1,americas,1,0,8
+cr,Costa Rica,San José,1,americas,0,0,
+cu,Cuba,Havana,1,americas,0,1,20
+cv,Cape Verde,Praia,1,africa,0,1,
+cy,Cyprus,Nicosia,1,europe,0,1,
+cz,Czechia,Prague,1,europe,0,0,20
+de,Germany,Berlin,1,europe,1,0,18
+dj,Djibouti,Djibouti,1,africa,0,0,
+dk,Denmark,Copenhagen,1,europe,1,0,6
+dm,Dominica,Roseau,1,americas,0,1,
+do,Dominican Republic,Santo Domingo,1,americas,0,1,
+dz,Algeria,Algiers,1,africa,0,0,
+ec,Ecuador,Quito,1,americas,0,0,8
+ee,Estonia,Tallinn,1,europe,0,0,
+eg,Egypt,Cairo,1,africa,1,0,12
+er,Eritrea,Asmara,1,africa,0,0,
+es,Spain,Madrid,1,europe,1,0,
+et,Ethiopia,Addis Ababa,1,africa,0,0,13
+fi,Finland,Helsinki,1,europe,1,0,6
+fj,Fiji,Suva,1,oceania,0,1,3
+fm,Micronesia,Palikir,1,oceania,0,1,
+fr,France,Paris,1,europe,1,0,
+ga,Gabon,Libreville,1,africa,0,0,
+gb,United Kingdom,London,1,europe,1,1,
+gd,Grenada,St. George's,1,americas,0,1,
+ge,Georgia,Tbilisi,1,europe,0,0,
+gh,Ghana,Accra,1,africa,0,0,13
+gm,Gambia,Banjul,1,africa,0,0,
+gn,Guinea,Conakry,1,africa,0,0,7
+gq,Equatorial Guinea,Ciudad de la Paz,1,africa,0,0,
+gr,Greece,Athens,1,europe,1,0,
+gt,Guatemala,Guatemala City,1,americas,0,0,9
+gw,Guinea-Bissau,Bissau,1,africa,0,0,
+gy,Guyana,Georgetown,1,americas,0,0,
+hn,Honduras,Tegucigalpa,1,americas,0,0,9
+hr,Croatia,Zagreb,1,europe,0,0,5
+ht,Haiti,Port-au-Prince,1,americas,0,1,15
+hu,Hungary,Budapest,1,europe,0,0,
+id,Indonesia,Jakarta,1,asia,1,1,2
+ie,Ireland,Dublin,1,europe,1,1,4
+il,Israel,,0,asia,1,0,
+in,India,New Delhi,1,asia,1,0,16
+iq,Iraq,Baghdad,1,asia,0,0,12
+ir,Iran,Tehran,1,asia,0,0,
+is,Iceland,Reykjavík,1,europe,0,1,6
+it,Italy,Rome,1,europe,1,0,4
+jm,Jamaica,Kingston,1,americas,1,1,
+jo,Jordan,Amman,1,asia,0,0,11
+jp,Japan,Tokyo,1,asia,1,1,
+ke,Kenya,Nairobi,1,africa,1,0,
+kg,Kyrgyzstan,Bishkek,1,asia,0,0,
+kh,Cambodia,Phnom Penh,1,asia,0,0,
+ki,Kiribati,South Tarawa,1,oceania,0,1,
+km,Comoros,Moroni,1,africa,0,1,
+kn,Saint Kitts and Nevis,Basseterre,1,americas,0,1,
+kp,North Korea,Pyongyang,1,asia,0,0,
+kr,South Korea,Seoul,1,asia,1,0,
+kw,Kuwait,Kuwait City,1,asia,0,0,11
+kz,Kazakhstan,Astana,1,asia,0,0,
+la,Laos,Vientiane,1,asia,0,0,
+lb,Lebanon,Beirut,1,asia,0,0,10
+lc,Saint Lucia,Castries,1,americas,0,1,
+li,Liechtenstein,Vaduz,1,europe,0,0,15
+lk,Sri Lanka,Sri Jayawardenepura Kotte,0,asia,0,1,
+lr,Liberia,Monrovia,1,africa,0,0,14
+ls,Lesotho,Maseru,1,africa,0,0,
+lt,Lithuania,Vilnius,1,europe,0,0,13
+lu,Luxembourg,Luxembourg,1,europe,0,0,5
+lv,Latvia,Riga,1,europe,0,0,10
+ly,Libya,Tripoli,1,africa,0,0,
+ma,Morocco,Rabat,1,africa,1,0,
+mc,Monaco,Monaco,1,europe,0,0,2
+md,Moldova,Chișinău,1,europe,0,0,1
+me,Montenegro,Podgorica,1,europe,0,0,
+mg,Madagascar,Antananarivo,1,africa,0,1,
+mh,Marshall Islands,Majuro,1,oceania,0,1,
+mk,North Macedonia,Skopje,1,europe,0,0,
+ml,Mali,Bamako,1,africa,0,0,7
+mm,Myanmar,Naypyidaw,1,asia,0,0,
+mn,Mongolia,Ulaanbaatar,1,asia,0,0,
+mr,Mauritania,Nouakchott,1,africa,0,0,
+mt,Malta,Valletta,1,europe,0,1,
+mu,Mauritius,Port Louis,1,africa,0,1,
+mv,Maldives,Malé,1,asia,0,1,
+mw,Malawi,Lilongwe,1,africa,0,0,
+mx,Mexico,Mexico City,1,americas,1,0,
+my,Malaysia,Kuala Lumpur,1,asia,1,0,14
+mz,Mozambique,Maputo,1,africa,0,0,
+na,Namibia,Windhoek,1,africa,0,0,
+ne,Niger,Niamey,1,africa,0,0,16
+ng,Nigeria,Abuja,1,africa,1,0,
+ni,Nicaragua,Managua,1,americas,0,0,9
+nl,Netherlands,Amsterdam,1,europe,1,0,5
+no,Norway,Oslo,1,europe,1,0,6
+np,Nepal,Kathmandu,1,asia,0,0,
+nr,Nauru,Yaren,0,oceania,0,1,
+nz,New Zealand,Wellington,1,oceania,1,1,3
+om,Oman,Muscat,1,asia,0,0,
+pa,Panama,Panama City,1,americas,0,0,
+pe,Peru,Lima,1,americas,1,0,19
+pg,Papua New Guinea,Port Moresby,1,oceania,0,1,
+ph,Philippines,Manila,1,asia,1,1,20
+pk,Pakistan,Islamabad,1,asia,1,0,
+pl,Poland,Warsaw,1,europe,1,0,2
+ps,Palestine,,0,asia,0,0,11
+pt,Portugal,Lisbon,1,europe,1,0,
+pw,Palau,Ngerulmud,1,oceania,0,1,
+py,Paraguay,Asunción,1,americas,0,0,
+qa,Qatar,Doha,1,asia,0,0,17
+ro,Romania,Bucharest,1,europe,0,0,1
+rs,Serbia,Belgrade,1,europe,0,0,5
+ru,Russia,Moscow,1,europe,1,0,5
+rw,Rwanda,Kigali,1,africa,0,0,
+sa,Saudi Arabia,Riyadh,1,asia,1,0,
+sb,Solomon Islands,Honiara,1,oceania,0,1,
+sc,Seychelles,Victoria,1,africa,0,1,
+sd,Sudan,Khartoum,1,africa,0,0,11
+se,Sweden,Stockholm,1,europe,1,0,6
+sg,Singapore,Singapore,1,asia,1,1,
+si,Slovenia,Ljubljana,1,europe,0,0,5
+sk,Slovakia,Bratislava,1,europe,0,0,5
+sl,Sierra Leone,Freetown,1,africa,0,0,
+sm,San Marino,San Marino,1,europe,0,0,
+sn,Senegal,Dakar,1,africa,0,0,7
+so,Somalia,Mogadishu,1,africa,0,0,
+sr,Suriname,Paramaribo,1,americas,0,0,
+ss,South Sudan,Juba,1,africa,0,0,
+st,São Tomé and Príncipe,São Tomé,1,africa,0,1,
+sv,El Salvador,San Salvador,1,americas,0,0,9
+sy,Syria,Damascus,1,asia,0,0,12
+sz,Eswatini,Mbabane / Lobamba,0,africa,0,0,
+td,Chad,N'Djamena,1,africa,0,0,1
+tg,Togo,Lomé,1,africa,0,0,
+th,Thailand,Bangkok,1,asia,1,0,
+tj,Tajikistan,Dushanbe,1,asia,0,0,
+tl,Timor-Leste,Dili,1,asia,0,1,
+tm,Turkmenistan,Ashgabat,1,asia,0,0,
+tn,Tunisia,Tunis,1,africa,0,0,
+to,Tonga,Nukuʻalofa,1,oceania,0,1,
+tr,Turkey,Ankara,1,asia,1,0,
+tt,Trinidad and Tobago,Port of Spain,1,americas,0,1,
+tv,Tuvalu,Funafuti,1,oceania,0,1,3
+tw,Taiwan,Taipei,0,asia,0,1,
+tz,Tanzania,Dodoma,1,africa,0,0,
+ua,Ukraine,Kyiv,1,europe,1,0,
+ug,Uganda,Kampala,1,africa,0,0,
+us,United States,"Washington, D.C.",1,americas,1,0,14
+uy,Uruguay,Montevideo,1,americas,0,0,9
+uz,Uzbekistan,Tashkent,1,asia,0,0,
+va,Vatican City,Vatican City,1,europe,0,0,
+vc,Saint Vincent and the Grenadines,Kingstown,1,americas,0,1,
+ve,Venezuela,Caracas,1,americas,0,0,8
+vn,Vietnam,Hanoi,1,asia,1,0,
+vu,Vanuatu,Port Vila,1,oceania,0,1,
+ws,Samoa,Apia,1,oceania,0,1,
+xk,Kosovo,Pristina,0,europe,0,0,
+ye,Yemen,Sanaa,0,asia,0,0,12
+za,South Africa,Pretoria / Cape Town / Bloemfontein,0,africa,1,0,
+zm,Zambia,Lusaka,1,africa,0,0,
+zw,Zimbabwe,Harare,1,africa,0,0,
