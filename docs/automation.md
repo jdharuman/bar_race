@@ -77,6 +77,22 @@ Google raises the quota, set `BARRACE_QUOTA=<new limit>` in
 `~/.config/barrace/env` and `systemctl --user restart n8n barrace-bot`.
 `/status` in the bot shows today's use.
 
+## The topic plan and the weekly trend scout
+
+`topics.plan.csv` (in git) is a full year: about 370 topics each for race,
+pillars and line charts, 53 per weekly theme, plus 365 quiz rows (`Guess the
+Flag: Europe #3` …; the quiz slot switches on with the quiz renderer and
+enough quota). Setup copies it to `topics.csv`; after that `topics.csv` is the
+live queue (edit it freely).
+
+**Trend scout:** every Monday 08:00 the n8n workflow "barrace weekly trend
+scout" runs `daily.py scout`: a sandboxed Claude run searches the news for
+timely topics (upcoming tournaments, releases, new data) and proposes up to
+5. Each arrives in Telegram with **✅ Add / ❌ Skip**; ✅ puts it at the top of
+`topics.csv`, so it is made on its theme's next day. Proposals are checked
+like any topics row and never repeat a planned or done title. Files:
+`videos/scout/<date>.json` (+ `.log`).
+
 ## One-off videos from Telegram
 
 The `barrace-bot` service (`automation/bot.py`) lets you order an extra video

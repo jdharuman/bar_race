@@ -4,7 +4,9 @@ pick -> research <dir> -> render <dir> -> upload <dir> -> finish <dir> --status 
 Each step prints one JSON line. On failure a step writes <dir>/error.txt and exits 1.
 """
 import argparse
+import contextlib
 import csv
+import fcntl
 import json
 import os
 import subprocess
@@ -21,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TOPIC_COLS = ["style", "title", "youtube_url", "comment", "look", "theme"]  # last two optional
 DONE_COLS = TOPIC_COLS + ["finished_at", "folder", "status", "main_video_id",
                           "short_video_id", "error"]
-STYLES = ("race", "pillars", "stocks", "compare")
+STYLES = ("race", "pillars", "stocks", "compare", "quiz")
 LINE_STYLES = ("stocks", "compare")  # rendered as line charts
 LOOKS = ("", "light", "neon")  # neon = black background, glowing lines (line charts only)
 # Weekly rhythm: each weekday has a theme (also the playlist the videos belong in).
@@ -81,6 +83,8 @@ def row_problem(row: dict) -> str | None:
         return f"theme must be empty or one of {', '.join(THEMES)} (got {row.get('theme')!r})"
     if not row.get("title") and not row.get("youtube_url"):
         return "need a title or a youtube_url"
+    if row.get("style") == "quiz" and not row.get("title", "").lower().startswith("guess the"):
+        return "a quiz title starts with 'Guess the' (e.g. 'Guess the Flag: Europe #3')"
     if row.get("youtube_url") and not video_id(row["youtube_url"]):
         return f"not a YouTube video link: {row['youtube_url']}"
     return None
@@ -156,7 +160,32 @@ def release_lock(root: Path) -> None:
     _lock(root).unlink(missing_ok=True)
 
 
+@contextlib.contextmanager
+def topics_lock(root: Path):
+    """Serialise read-modify-write of topics.csv (nightly run vs. bot approvals)."""
+    path = root / "videos" / ".topics.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def insert_topic(root: Path, row: dict) -> None:
+    """Put `row` at the top of topics.csv (it then runs on its theme's next day)."""
+    with topics_lock(root):
+        topics = read_rows(root / "topics.csv")
+        write_rows(root / "topics.csv", TOPIC_COLS, [{c: row.get(c, "") for c in TOPIC_COLS}, *topics])
+
+
 def move_to_done(root: Path, row: dict, **fields) -> None:
+    with topics_lock(root):
+        _move_to_done(root, row, **fields)
+
+
+def _move_to_done(root: Path, row: dict, **fields) -> None:
     """Remove the first row equal to `row` from topics.csv and append it to topics_done.csv."""
     topics = read_rows(root / "topics.csv")
     def key(r: dict) -> list[str]:  # look/theme are matched case-blind ("Neon" == "neon")
@@ -697,6 +726,7 @@ def main(argv=None) -> int:
     sub.add_parser("pick")
     sub.add_parser("run", help="all steps for the first topic, then notify (what n8n calls)")
     sub.add_parser("auth")
+    sub.add_parser("scout", help="weekly trend scout: propose timely topics in Telegram")
     rq = sub.add_parser("request", help="one-off video from the Telegram bot; never touches topics.csv")
     rq.add_argument("--style", choices=STYLES)
     rq.add_argument("--title", default="")
@@ -738,6 +768,9 @@ def main(argv=None) -> int:
         except Exception as e:  # steps report themselves; this catches everything else
             send_telegram(f"❌ Telegram request crashed: {type(e).__name__}: {e}")
             return 70
+    if a.cmd == "scout":
+        import scout
+        return scout.run_scout(root, date.today())
     if a.cmd == "auth":
         import youtube
         youtube.auth()

@@ -325,7 +325,9 @@ impl LinePainter {
             let (_, y) = self.px(f, f.x_min, v);
             self.hline(pm, l.chart_left, l.chart_right, y, grid);
             let s = format_tick(v, &self.cfg.unit_prefix, &self.cfg.unit_suffix, self.cfg.number_style);
-            self.txt(pm, &s, l.chart_left - tick * 0.6, y, tick, false, with_alpha(self.fg, 0.5), Align::Right);
+            // long values ("₹600,000,000") shrink to fit the left margin
+            let ts = self.fit(&s, tick, false, l.chart_left - tick * 1.0);
+            self.txt(pm, &s, l.chart_left - tick * 0.6, y, ts, false, with_alpha(self.fg, 0.5), Align::Right);
         }
         let max_ticks = if l.portrait { 4.0 } else { 7.0 };
         let step = year_step(f.x_max - f.x_min, max_ticks);

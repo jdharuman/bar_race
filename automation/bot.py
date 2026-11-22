@@ -38,7 +38,7 @@ HELP = ("barrace bot\n"
         "/new – make a one-off video now (not from topics.csv)\n"
         "/status – is a video being made right now?\n"
         "/retry – retry the last failed request (finished steps are kept)\n"
-        "/cancel – stop filling in /new\n"
+        "/cancel – stop filling in /new\n"        "Mondays: trend ideas arrive here; ✅ adds one to the top of topics.csv.\n"
         "The daily 02:00 video from topics.csv keeps running as usual.")
 COMMANDS = [("new", "Make a one-off video"), ("status", "Is a video being made?"),
             ("retry", "Retry the last failed request"), ("cancel", "Stop filling in /new"),
@@ -149,6 +149,10 @@ class Bot:
 
     # -- form --
     def on_button(self, chat: int, data: str) -> None:
+        if data.startswith("scout:"):  # weekly trend scout idea: add / skip
+            import scout
+            self.say(chat, scout.decide(self.root, data))
+            return
         form = self.forms.get(chat)
         if data == "cancel":
             self.forms.pop(chat, None)

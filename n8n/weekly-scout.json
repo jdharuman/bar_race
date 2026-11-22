@@ -1,0 +1,41 @@
+{
+  "id": "barraceWeeklyScout",
+  "name": "barrace weekly trend scout",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "cronExpression", "expression": "0 8 * * 1" } ] }
+      },
+      "id": "6d2f9a10-3b7c-4e51-9a2d-1f0e8c7b5a01",
+      "name": "Mondays 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {},
+      "id": "6d2f9a10-3b7c-4e51-9a2d-1f0e8c7b5a02",
+      "name": "Run now (manual)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {
+        "command": "cd \"$BARRACE_REPO\" && uv run --project automation automation/daily.py scout 2>&1"
+      },
+      "id": "6d2f9a10-3b7c-4e51-9a2d-1f0e8c7b5a03",
+      "name": "Find trend ideas",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [320, 100]
+    }
+  ],
+  "connections": {
+    "Mondays 08:00": { "main": [ [ { "node": "Find trend ideas", "type": "main", "index": 0 } ] ] },
+    "Run now (manual)": { "main": [ [ { "node": "Find trend ideas", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "barraceErrNotify" },
+  "active": false,
+  "pinData": {}
+}

@@ -189,7 +189,10 @@ reviewed = true       # the owner reviews the finished video instead
   `number_style = "full"`, title = the companies (`Apple vs Microsoft vs Nvidia`),
   `subtitle = "Value of $1,000 invested in {start}, dividends reinvested (Yahoo Finance)"`.
   Keep `{start}` literally: the renderer fills in the first month each video
-  shows (the Short may start later). If `row.look` is `neon`, add
+  shows (the Short may start later). **Indian (NSE) stocks** are in rupees:
+  `unit_prefix = "₹"`, `rebase = 100000`, subtitle
+  `"Value of ₹1 lakh invested in {start}, dividends reinvested (Yahoo Finance)"`
+  (tickers end in `.NS`; never mix ₹ and $ in one video). If `row.look` is `neon`, add
   `look = "neon"` (black background, glowing lines); otherwise leave `look` out. Main video 2–4 min:
   `seconds_per_year` = 180 / years, between 4 and 12.
 - Don't set `music`; the renderer picks a bundled CC0 track.
