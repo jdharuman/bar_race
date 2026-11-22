@@ -36,6 +36,9 @@ pub struct VideoConfig {
     /// Line chart: draw each line as `rebase × value / value at the first shown time`
     /// (e.g. 1000 = "value of $1,000 invested"). None = raw values.
     pub rebase: Option<f64>,
+    /// Line chart look: `default` follows channel.toml; `neon` = black background,
+    /// vivid glowing lines.
+    pub look: Look,
 }
 
 impl Default for VideoConfig {
@@ -60,6 +63,7 @@ impl Default for VideoConfig {
             reviewed: false,
             colors: BTreeMap::new(),
             rebase: None,
+            look: Look::Default,
         }
     }
 }
@@ -131,6 +135,17 @@ pub enum Style {
     Pillars,
     /// Animated line chart comparing a few series over time (data.csv).
     Lines,
+}
+
+/// Visual look of the line chart.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Look {
+    /// Channel theme colours.
+    #[default]
+    Default,
+    /// Black background, neon colours with a glow.
+    Neon,
 }
 
 /// Pillar colour source in the pillar walk.
@@ -266,6 +281,9 @@ mod tests {
 
     #[test]
     fn lines_style_and_rebase_parse() {
+        let n: VideoConfig = toml::from_str("look = \"neon\"").unwrap();
+        assert_eq!(n.look, Look::Neon);
+        assert_eq!(VideoConfig::default().look, Look::Default);
         let c: VideoConfig = toml::from_str("style = \"lines\"\nrebase = 1000").unwrap();
         assert_eq!(c.style, Style::Lines);
         assert_eq!(c.rebase, Some(1000.0));

@@ -38,7 +38,7 @@ fails visibly and the owner can rephrase the topic.
 `<dir>/topic.json`:
 
 ```json
-{"row": {"style": "race|pillars|stocks", "title": "...", "youtube_url": "...", "comment": "..."},
+{"row": {"style": "race|pillars|stocks", "title": "...", "youtube_url": "...", "comment": "...", "look": "|light|neon"},
  "redo_of": "/path/to/previous/folder or null", "picked_at": "..."}
 ```
 
@@ -170,7 +170,8 @@ reviewed = true       # the owner reviews the finished video instead
   `number_style = "full"`, title = the companies (`Apple vs Microsoft vs Nvidia`),
   `subtitle = "Value of $1,000 invested in {start}, dividends reinvested (Yahoo Finance)"`.
   Keep `{start}` literally: the renderer fills in the first month each video
-  shows (the Short may start later). Main video 2–4 min:
+  shows (the Short may start later). If `row.look` is `neon`, add
+  `look = "neon"` (black background, glowing lines); otherwise leave `look` out. Main video 2–4 min:
   `seconds_per_year` = 180 / years, between 4 and 12.
 - Don't set `music`; the renderer picks a bundled CC0 track.
 

@@ -17,8 +17,8 @@ def write_topics(root, rows):
     daily.write_rows(root / "topics.csv", daily.TOPIC_COLS, rows)
 
 
-def row(style="race", title="Largest Economies", url="", comment=""):
-    return {"style": style, "title": title, "youtube_url": url, "comment": comment}
+def row(style="race", title="Largest Economies", url="", comment="", look=""):
+    return {"style": style, "title": title, "youtube_url": url, "comment": comment, "look": look}
 
 
 def cli(root, *args):
@@ -302,7 +302,9 @@ def test_headerless_topics_not_wiped(tmp_path):
 
 def test_excel_bom_header_ok(tmp_path):
     (tmp_path / "topics.csv").write_bytes("﻿style,title,youtube_url,comment\nrace,A,,\n".encode())
-    assert daily.read_rows(tmp_path / "topics.csv") == [row(title="A")]
+    r = row(title="A")
+    del r["look"]  # an old 4-column file has no look column
+    assert daily.read_rows(tmp_path / "topics.csv") == [r]
 
 
 def test_retry_after_failed_upload_resumes_same_folder(tmp_path):
@@ -420,3 +422,29 @@ def test_claude_cmd_ignores_user_hooks(tmp_path):
     # user-level hooks (e.g. command rewriters) break the tool allowlist
     cmd = daily.claude_cmd(tmp_path / "videos" / "x", tmp_path)
     assert cmd[cmd.index("--setting-sources") + 1] == "project"
+
+
+def test_old_four_column_topics_still_read(tmp_path):
+    (tmp_path / "topics.csv").write_text("style,title,youtube_url,comment\nstocks,Apple vs Nvidia,,\n")
+    r = cli(tmp_path, "pick")
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_look_validated():
+    assert daily.row_problem(row(style="stocks", title="A vs B", look="neon")) is None
+    assert daily.row_problem(row(style="stocks", title="A vs B", look="NEON")) is None
+    assert "only for stocks" in daily.row_problem(row(look="neon"))
+    assert "look must be" in daily.row_problem(row(style="stocks", title="A vs B", look="pink"))
+
+
+def test_look_lowercased_into_topic_json(tmp_path):
+    write_topics(tmp_path, [row(style="stocks", title="Apple vs Nvidia", look="Neon")])
+    d = daily.pick(tmp_path, TODAY)["dir"]
+    assert json.loads((Path(d) / "topic.json").read_text())["row"]["look"] == "neon"
+
+
+def test_mixed_case_look_row_still_leaves_topics(tmp_path):
+    write_topics(tmp_path, [row(style="stocks", title="Apple vs Nvidia", look="Neon"), row(title="Next")])
+    d = Path(daily.pick(tmp_path, TODAY)["dir"])
+    daily.finish(tmp_path, d, "failed")
+    assert [r["title"] for r in daily.read_rows(tmp_path / "topics.csv")] == ["Next"]

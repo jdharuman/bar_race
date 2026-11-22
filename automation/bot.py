@@ -67,7 +67,8 @@ SKIP = buttons([("Skip", "skip")])
 
 
 def summary(r: dict) -> str:
-    return (f"Style: {r['style']}\nTitle: {r['title']}\n"
+    look = f"\nLook: {'black neon' if r.get('look') == 'neon' else 'light'}" if r["style"] == "stocks" else ""
+    return (f"Style: {r['style']}\nTitle: {r['title']}{look}\n"
             f"YouTube hint: {r['youtube_url'] or '–'}\nNotes: {r['comment'] or '–'}")
 
 
@@ -161,6 +162,9 @@ class Bot:
             else:
                 self.say(chat, f"Title? (up to {MAX_TITLE} characters)\n"
                                "e.g. Most Visited Countries in the World")
+        elif step == "look" and data in ("look:neon", "look:light"):
+            r["look"] = data.split(":")[1]
+            self.ask_url(chat, form)
         elif step == "url" and data == "skip":
             self.ask_comment(chat, form)
         elif step == "comment" and data == "skip":
@@ -169,7 +173,8 @@ class Bot:
             self.forms.pop(chat, None)
             # --opt=value: a value starting with "-" must not look like an option
             self.run(chat, [f"--style={r['style']}", f"--title={r['title']}",
-                            f"--url={r['youtube_url']}", f"--comment={r['comment']}"],
+                            f"--url={r['youtube_url']}", f"--comment={r['comment']}",
+                            f"--look={r['look']}"],
                      f"Starting: {r['title']}")
         else:
             self.say(chat, "Please answer the current question, or /cancel.")
@@ -189,9 +194,11 @@ class Bot:
                     return
                 text = " vs ".join(names)
             r["title"] = text
-            form["step"] = "url"
-            self.say(chat, "YouTube link as a topic hint? (optional; only the topic is used, "
-                           "never the video's numbers or frames)", SKIP)
+            if r["style"] == "stocks":
+                form["step"] = "look"
+                self.say(chat, "Look?", buttons([("⬛ Black neon", "look:neon"), ("⬜ Light", "look:light")]))
+            else:
+                self.ask_url(chat, form)
         elif step == "url":
             if not daily.video_id(text):
                 self.say(chat, "That isn't a YouTube video link. Send one, or tap Skip.", SKIP)
@@ -206,6 +213,11 @@ class Bot:
             self.confirm(chat, form)
         else:
             self.say(chat, "Please use the buttons above, or /cancel.")
+
+    def ask_url(self, chat: int, form: dict) -> None:
+        form["step"] = "url"
+        self.say(chat, "YouTube link as a topic hint? (optional; only the topic is used, "
+                       "never the video's numbers or frames)", SKIP)
 
     def ask_comment(self, chat: int, form: dict) -> None:
         form["step"] = "comment"

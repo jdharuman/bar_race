@@ -1,14 +1,17 @@
 //! Animated line chart (`style = "lines"`): a few series drawn left to right over time,
 //! e.g. "value of $1,000 invested" in 2–3 stocks. Reuses data.csv, the Timeline,
 //! events and the intro/end cards; this module draws the chart itself.
-use crate::config::{ChannelConfig, Theme, VideoConfig};
+use crate::config::{ChannelConfig, Look, Theme, VideoConfig};
 use crate::data::{Dataset, Item};
 use crate::draw::{hex, initials, load_circle_image, nice_ticks, ring, with_alpha};
 use crate::fmt::{format_tick, format_time, format_value};
 use crate::layout::Layout;
 use crate::text::{Align, Text};
 use anyhow::Result;
-use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, Transform};
+use tiny_skia::{
+    Color, FillRule, GradientStop, LineCap, LineJoin, LinearGradient, Paint, PathBuilder, Pixmap, PixmapPaint, Point, Rect, SpreadMode,
+    Stroke, Transform,
+};
 
 /// The y-axis top sits this far above the highest value shown so far.
 const Y_HEADROOM: f64 = 1.12;
@@ -18,6 +21,17 @@ const Y_TAU: f64 = 0.35;
 /// two blue logos would otherwise give two blue lines.
 const LIGHT: [&str; 6] = ["#2563eb", "#e11d48", "#16a34a", "#d97706", "#7c3aed", "#0891b2"];
 const DARK: [&str; 6] = ["#60a5fa", "#fb7185", "#4ade80", "#fbbf24", "#a78bfa", "#22d3ee"];
+/// `look = "neon"`: saturated colours that glow on black, chosen to stay distinct.
+const NEON: [&str; 6] = ["#00e5ff", "#ff2bd6", "#a3ff12", "#ff9f1c", "#b388ff", "#ffe600"];
+
+/// Channel colours for this look: neon forces a black background and white text
+/// (also used for the intro/end cards).
+pub fn channel_for(cfg: &VideoConfig, ch: &ChannelConfig) -> ChannelConfig {
+    match cfg.look {
+        Look::Neon => ChannelConfig { theme: Theme::Dark, background: Some("#000000".into()), text: Some("#ffffff".into()), ..ch.clone() },
+        Look::Default => ch.clone(),
+    }
+}
 
 /// Value of `item` at `t` (linear between points); None outside its data range.
 /// Unlike the bar race there is no ramp: a line simply starts and stops.
@@ -177,7 +191,12 @@ pub struct LinePainter {
 
 impl LinePainter {
     pub fn new(ds: &Dataset, cfg: &VideoConfig, ch: &ChannelConfig, l: Layout, scales: Vec<f64>) -> Result<LinePainter> {
-        let palette = if ch.theme == Theme::Dark { DARK } else { LIGHT };
+        let ch = &channel_for(cfg, ch);
+        let palette = match (cfg.look, ch.theme) {
+            (Look::Neon, _) => NEON,
+            (_, Theme::Dark) => DARK,
+            _ => LIGHT,
+        };
         let colors = ds
             .items
             .iter()
@@ -273,6 +292,31 @@ impl LinePainter {
         }
     }
 
+    /// Neon look: colour fading from the line down to the baseline.
+    fn area_fill(&self, pm: &mut Pixmap, pts: &[(f32, f32)], c: Color) {
+        let (Some(first), Some(last)) = (pts.first(), pts.last()) else { return };
+        if last.0 - first.0 < 1.0 {
+            return;
+        }
+        let bottom = self.l.chart_bottom;
+        let top = pts.iter().map(|p| p.1).fold(bottom, f32::min);
+        let mut pb = PathBuilder::new();
+        pb.move_to(first.0, bottom);
+        for &(x, y) in pts {
+            pb.line_to(x, y);
+        }
+        pb.line_to(last.0, bottom);
+        pb.close();
+        let Some(path) = pb.finish() else { return };
+        let stops = vec![GradientStop::new(0.0, with_alpha(c, 0.22)), GradientStop::new(1.0, with_alpha(c, 0.0))];
+        let Some(shader) = LinearGradient::new(Point::from_xy(0.0, top), Point::from_xy(0.0, bottom), stops, SpreadMode::Pad, Transform::identity())
+        else {
+            return;
+        };
+        let paint = Paint { shader, anti_alias: true, ..Default::default() };
+        pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+
     fn paint_grid(&mut self, pm: &mut Pixmap, f: &LineFrame) {
         let l = self.l.clone();
         let tick = l.label_size * 0.75;
@@ -302,9 +346,13 @@ impl LinePainter {
 
     fn paint_lines(&mut self, pm: &mut Pixmap, f: &LineFrame) {
         let l = self.l.clone();
-        let stroke = Stroke { width: 0.0055 * (l.width.min(l.height) as f32), line_cap: LineCap::Round, line_join: LineJoin::Round, ..Default::default() };
+        let width = 0.0055 * (l.width.min(l.height) as f32);
+        let stroke = |w: f32| Stroke { width: w, line_cap: LineCap::Round, line_join: LineJoin::Round, ..Default::default() };
+        let neon = self.cfg.look == Look::Neon;
         // (item, head x, head y, value) of every visible line
         let mut heads: Vec<(usize, f32, f32, f64)> = Vec::new();
+        // (item, polyline) drawn after all area fills, so no fill washes over a line
+        let mut polylines: Vec<(usize, Vec<(f32, f32)>)> = Vec::new();
         for i in 0..self.ds.items.len() {
             let k = self.scales[i];
             if !k.is_finite() {
@@ -317,23 +365,35 @@ impl LinePainter {
             if t1 < t0 {
                 continue;
             }
-            let mut pb = PathBuilder::new();
-            let (sx, sy) = self.px(f, t0, series_at(it, t0).unwrap_or(0.0) * k);
-            pb.move_to(sx, sy);
+            let mut pts = vec![self.px(f, t0, series_at(it, t0).unwrap_or(0.0) * k)];
             for p in it.points.iter().filter(|p| p.t > t0 && p.t < t1) {
-                let (x, y) = self.px(f, p.t, p.value * k);
-                pb.line_to(x, y);
+                pts.push(self.px(f, p.t, p.value * k));
             }
             let v = series_at(it, t1).unwrap_or(0.0) * k;
             let (hx, hy) = self.px(f, t1, v);
-            pb.line_to(hx + 0.01, hy); // a zero-length path still draws a dot
-            if let Some(path) = pb.finish() {
-                let mut paint = Paint::default();
-                paint.set_color(self.colors[i]);
-                paint.anti_alias = true;
-                pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            pts.push((hx + 0.01, hy)); // a zero-length path still draws a dot
+            if neon {
+                self.area_fill(pm, &pts, self.colors[i]);
             }
+            polylines.push((i, pts));
             heads.push((i, hx, hy, v));
+        }
+        for (i, pts) in &polylines {
+            let mut pb = PathBuilder::new();
+            pb.move_to(pts[0].0, pts[0].1);
+            for &(x, y) in &pts[1..] {
+                pb.line_to(x, y);
+            }
+            let Some(path) = pb.finish() else { continue };
+            let c = self.colors[*i];
+            // neon: soft glow (wide faint strokes) under the line
+            let layers: &[(f32, f32)] = if neon { &[(5.0, 0.07), (3.0, 0.14), (1.8, 0.30), (1.0, 1.0)] } else { &[(1.0, 1.0)] };
+            for &(wk, a) in layers {
+                let mut paint = Paint::default();
+                paint.set_color(with_alpha(c, a));
+                paint.anti_alias = true;
+                pm.stroke_path(&path, &paint, &stroke(width * wk), Transform::identity(), None);
+            }
         }
         // heads and labels: highest value drawn last (on top)
         heads.sort_by(|a, b| a.3.total_cmp(&b.3));
@@ -349,16 +409,29 @@ impl LinePainter {
                     let paint = PixmapPaint::default();
                     pm.draw_pixmap((hx - r).round() as i32, (hy - r).round() as i32, img.as_ref(), &paint, Transform::identity(), None);
                     ring(pm, hx, hy, r, c);
+                    if neon {
+                        ring(pm, hx, hy, r * 1.25, with_alpha(c, 0.35));
+                    }
                 }
                 None => {
                     let mut paint = Paint::default();
                     paint.set_color(c);
                     paint.anti_alias = true;
+                    if neon {
+                        let mut glow = Paint::default();
+                        glow.set_color(with_alpha(c, 0.25));
+                        glow.anti_alias = true;
+                        if let Some(halo) = PathBuilder::from_circle(hx, hy, r * 1.45) {
+                            pm.fill_path(&halo, &glow, FillRule::Winding, Transform::identity(), None);
+                        }
+                    }
                     if let Some(circle) = PathBuilder::from_circle(hx, hy, r) {
                         pm.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
                     }
                     let ini = initials(&self.ds.items[i].name);
-                    self.txt(pm, &ini, hx, hy, r * 0.85, true, Color::WHITE, Align::Center);
+                    // neon colours are light: dark initials read better on them
+                    let ink = if neon { Color::BLACK } else { Color::WHITE };
+                    self.txt(pm, &ini, hx, hy, r * 0.85, true, ink, Align::Center);
                 }
             }
             let ly = label_y[k];
@@ -529,6 +602,23 @@ mod tests {
                 assert!(s.contains(want), "{want} missing in {s}");
             }
         }
+    }
+
+    #[test]
+    fn neon_look_is_black_with_neon_lines() {
+        let d = ds();
+        let cfg = VideoConfig { look: Look::Neon, rebase: Some(1000.0), ..Default::default() };
+        let mut tr = LineTracker::new(&d, 2010.0, 2012.0, cfg.rebase);
+        let mut p = LinePainter::new(&d, &cfg, &ChannelConfig::default(), layout(0.5, false), tr.scales().to_vec()).unwrap();
+        let f = tr.step(&d, 2012.0, 1.0);
+        let mut pm = Pixmap::new(p.l.width, p.l.height).unwrap();
+        p.paint(&mut pm, &f, true);
+        let corner = pm.pixel(2, 2).unwrap();
+        assert_eq!((corner.red(), corner.green(), corner.blue()), (0, 0, 0), "background must be black");
+        assert!(count(&pm, NEON[0]) > 200 && count(&pm, NEON[1]) > 200, "neon lines");
+        assert_eq!(count(&pm, LIGHT[0]), 0);
+        let ch = channel_for(&cfg, &ChannelConfig::default());
+        assert_eq!(ch.colors(), ("#000000".to_string(), "#ffffff".to_string()));
     }
 
     #[test]

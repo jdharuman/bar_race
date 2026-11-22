@@ -32,6 +32,7 @@ race,,https://www.youtube.com/watch?v=gyHSFZ4fIh4,
 | `title` | the topic in your words |
 | `youtube_url` | optional reference video; used only to learn the topic, never copied |
 | `comment` | empty for a new topic; for a redo, what was wrong |
+| `look` | optional; `neon` = black background with glowing colours (stocks only), empty = light. Older files without this column still work. |
 
 The run always takes the **top row**. Reorder rows to change what comes next.
 Finished rows move to `topics_done.csv` with the folder, status, video ids and

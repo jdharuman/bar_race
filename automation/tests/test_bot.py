@@ -65,7 +65,7 @@ def test_full_form_starts_request_with_exact_args(tmp_path):
     assert "Most Visited Countries" in tg.texts()[-1]
     b.handle(tap("go"))
     assert started == [["--style=race", "--title=Most Visited Countries", "--url=",
-                        "--comment=use UN Tourism data 2000-2024"]]
+                        "--comment=use UN Tourism data 2000-2024", "--look="]]
     assert "Starting" in tg.texts()[-1]
     assert not (tmp_path / "topics.csv").exists()  # never queued
 
@@ -177,8 +177,21 @@ def test_stocks_form_normalises_companies(tmp_path):
     assert "Which companies" in tg.texts()[-1]
     fill(b, msg("Apple"))
     assert "2 or 3" in tg.texts()[-1]
-    fill(b, msg("apple, Microsoft and NVIDIA"), tap("skip"), tap("skip"), tap("go"))
+    fill(b, msg("apple, Microsoft and NVIDIA"))
+    assert tg.last_buttons() == ["look:neon", "look:light"]
+    fill(b, tap("look:neon"), tap("skip"), tap("skip"))
+    assert "black neon" in tg.texts()[-1]
+    fill(b, tap("go"))
     assert started[0][:2] == ["--style=stocks", "--title=apple vs Microsoft vs NVIDIA"]
+    assert started[0][-1] == "--look=neon"
+
+
+def test_race_form_never_asks_look(tmp_path):
+    b, tg, started = make(tmp_path)
+    fill(b, msg("/new"), tap("style:race"), msg("GDP"))
+    assert "YouTube link" in tg.texts()[-1]
+    fill(b, tap("look:neon"))  # stale/foreign button: ignored
+    assert "current question" in tg.texts()[-1]
 
 
 def test_companies_split():

@@ -189,4 +189,7 @@ reviewed = true
 - Line colours come from a fixed high-contrast palette (override per name
   or category with `[colors]`). Images, if given, appear in the head circles.
 - `events.csv` captions appear top-left of the chart (below it in the Short).
+- `look = "neon"`: black background, vivid glowing lines with a colour haze
+  beneath, black intro/end cards (overrides `channel.toml` colours for this
+  video). Default: the channel theme.
 - Bar-race settings (`top_n`, `--bars`, `thumb --year`) are ignored.

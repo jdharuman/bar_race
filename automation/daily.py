@@ -17,10 +17,11 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
-TOPIC_COLS = ["style", "title", "youtube_url", "comment"]
+TOPIC_COLS = ["style", "title", "youtube_url", "comment", "look"]  # look: optional
 DONE_COLS = TOPIC_COLS + ["finished_at", "folder", "status", "main_video_id",
                           "short_video_id", "error"]
 STYLES = ("race", "pillars", "stocks")
+LOOKS = ("", "light", "neon")  # neon = black background, glowing lines (stocks only)
 LOCK_STALE_S = 6 * 3600
 
 
@@ -57,6 +58,11 @@ def write_rows(path: Path, cols: list[str], rows: list[dict]) -> None:
 def row_problem(row: dict) -> str | None:
     if row.get("style") not in STYLES:
         return f"style must be race, pillars or stocks (got {row.get('style')!r})"
+    look = row.get("look", "").lower()
+    if look not in LOOKS:
+        return f"look must be empty, light or neon (got {row.get('look')!r})"
+    if look == "neon" and row.get("style") != "stocks":
+        return "look = neon is only for stocks (line chart) videos"
     if not row.get("title") and not row.get("youtube_url"):
         return "need a title or a youtube_url"
     if row.get("youtube_url") and not video_id(row["youtube_url"]):
@@ -137,9 +143,10 @@ def release_lock(root: Path) -> None:
 def move_to_done(root: Path, row: dict, **fields) -> None:
     """Remove the first row equal to `row` from topics.csv and append it to topics_done.csv."""
     topics = read_rows(root / "topics.csv")
-    key = [row.get(c, "") for c in TOPIC_COLS]
+    def key(r: dict) -> list[str]:  # look is matched case-blind ("Neon" == "neon")
+        return [r.get(c, "").lower() if c == "look" else r.get(c, "") for c in TOPIC_COLS]
     for i, r in enumerate(topics):
-        if [r.get(c, "") for c in TOPIC_COLS] == key:
+        if key(r) == key(row):
             del topics[i]
             break
     write_rows(root / "topics.csv", TOPIC_COLS, topics)
@@ -158,6 +165,7 @@ def pick(root: Path, today: date) -> dict:
     if not topics:
         raise LookupError("empty")
     row = {c: topics[0].get(c, "") for c in TOPIC_COLS}
+    row["look"] = row["look"].lower()
     if problem := row_problem(row):
         move_to_done(root, row, status="failed", error=f"pick: {problem}")
         raise Invalid(problem)
@@ -465,6 +473,7 @@ def run_request(root: Path, today: date, row: dict | None = None, resume: Path |
     if resume is not None:
         row = json.loads((resume / "topic.json").read_text())["row"]
     row = {c: (row or {}).get(c, "").strip() for c in TOPIC_COLS}
+    row["look"] = row["look"].lower()
     if problem := row_problem(row):
         notify(f"❌ Telegram request rejected: {problem}")
         return 2
@@ -517,6 +526,7 @@ def main(argv=None) -> int:
     rq.add_argument("--title", default="")
     rq.add_argument("--url", default="")
     rq.add_argument("--comment", default="")
+    rq.add_argument("--look", default="", choices=LOOKS)
     rq.add_argument("--resume", type=Path, help="retry a failed request folder")
     for step in ("research", "render", "upload"):
         sub.add_parser(step).add_argument("dir", type=Path)
@@ -548,7 +558,7 @@ def main(argv=None) -> int:
                 return run_request(root, date.today(), resume=a.resume.resolve())
             return run_request(root, date.today(), row={
                 "style": a.style or "", "title": a.title, "youtube_url": a.url,
-                "comment": a.comment})
+                "comment": a.comment, "look": a.look})
         except Exception as e:  # steps report themselves; this catches everything else
             send_telegram(f"❌ Telegram request crashed: {type(e).__name__}: {e}")
             return 70

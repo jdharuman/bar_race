@@ -201,6 +201,7 @@ fn render_lines(week_dir: &Path, cfg: &VideoConfig, fmt: Format, opts: &RenderOp
     };
     let tl = Timeline::new(fmt, cfg, &ds, fps);
     let cfg = &crate::lines::fill_start(cfg, tl.start, ds.granularity);
+    let ch = crate::lines::channel_for(cfg, &ch);
     let (events, ev_errors) = crate::events::parse(week_dir)?;
     if !ev_errors.is_empty() {
         bail!("events.csv has errors:\n  {}", ev_errors.join("\n  "));
@@ -249,6 +250,7 @@ fn thumb_lines(week_dir: &Path, cfg: &VideoConfig) -> Result<PathBuf> {
     let ch = ChannelConfig::load_or_default(Path::new("channel.toml"))?;
     let layout = crate::lines::layout(1.0, false);
     let cfg = &crate::lines::fill_start(cfg, ds.first, ds.granularity);
+    let ch = crate::lines::channel_for(cfg, &ch);
     let mut tracker = LineTracker::new(&ds, ds.first, ds.last, cfg.rebase);
     let frame = tracker.step(&ds, ds.last, 1.0);
     let mut pm = Pixmap::new(layout.width, layout.height).unwrap();
