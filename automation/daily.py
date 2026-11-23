@@ -46,6 +46,9 @@ class StepError(Exception):
     pass
 
 
+NO_DATA = ".no-data"  # marker: research found no trustworthy source and stopped on purpose
+
+
 class BadFile(Exception):
     pass
 
@@ -290,6 +293,16 @@ def claude_cmd(d: Path, root: Path) -> list[str]:
             "--output-format", "json"]
 
 
+def _claude_result(stdout: str, limit: int = 700) -> str:
+    """The agent's final message from `claude --output-format json`, shortened."""
+    try:
+        text = json.loads(stdout or "").get("result") or ""
+    except (ValueError, AttributeError):
+        text = ""
+    text = text.strip() or "(no final message)"
+    return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + " …"
+
+
 def _tail(text: str, n: int = 30) -> str:
     return "\n".join((text or "").strip().splitlines()[-n:])
 
@@ -336,6 +349,7 @@ def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
     if is_quiz(d):
         return make_quiz(root, d, run)
     cmd = claude_cmd(d, root)
+    (d / NO_DATA).unlink(missing_ok=True)
     # ponytail: env scrub + path-scoped writes + tripwire; `uv run` can still run any
     # Python as this user. Real boundary = Claude Code sandbox or a separate unix user.
     env = {k: os.environ[k] for k in AGENT_ENV if k in os.environ}
@@ -358,7 +372,10 @@ def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
         raise StepError("research changed tool files outside the video folder: "
                         + ", ".join(changed[:10]) + " (check with git diff before running again)")
     if not (d / "metadata.json").exists():
-        raise StepError("claude finished but wrote no metadata.json")
+        (d / NO_DATA).touch()
+        raise StepError("research gave up, no video made (no trustworthy data found). "
+                        f"Claude said:\n{_claude_result(r.stdout)}\n"
+                        "Full reasons: research_notes.md in the video folder.")
     topic = json.loads((d / "topic.json").read_text()) if (d / "topic.json").exists() else {}
     notes = d / "research_notes.md"
     if topic.get("row", {}).get("comment") and (
@@ -550,7 +567,20 @@ def reject_bad_rows(root: Path, notify) -> None:
             notify(f"❌ barrace skipped a bad topics.csv row ({row['title'] or row['youtube_url']}): {problem}")
 
 
+SLOT_TRIES = 2  # a topic that can't be sourced makes way for the slot's next topic once
+
+
 def run_slot(root: Path, today: date, slot: str, steps, notify, sleep, wait_s: int) -> int:
+    for attempt in range(1, SLOT_TRIES + 1):
+        code, d = _run_slot_once(root, today, slot, steps, notify, sleep, wait_s)
+        if not (code == 1 and d and (d / NO_DATA).exists()) or attempt == SLOT_TRIES:
+            return code
+        notify(f"↪️ barrace: trying the next {slot} topic instead.")
+    return code
+
+
+def _run_slot_once(root: Path, today: date, slot: str, steps, notify, sleep,
+                   wait_s: int) -> tuple[int, Path | None]:
     waited = 0
     while True:
         code, payload = start(root, today, slot)
@@ -565,9 +595,9 @@ def run_slot(root: Path, today: date, slot: str, steps, notify, sleep, wait_s: i
         elif busy_with_request:
             notify(f"❌ barrace skipped today's video: a Telegram request was still "
                    f"running after {wait_s // 3600} h.")
-        return code
+        return code, None
     d = Path(payload["dir"])
-    return run_steps(root, d, steps, notify, lambda status: finish(root, d, status))
+    return run_steps(root, d, steps, notify, lambda status: finish(root, d, status)), d
 
 
 def run_steps(root: Path, d: Path, steps, notify, finish_fn) -> int:

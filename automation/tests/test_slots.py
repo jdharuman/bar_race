@@ -173,3 +173,31 @@ def test_request_held_for_quota_is_not_a_failure(tmp_path):
     assert code == 0 and "⏳" in sent[0] and "Telegram request" in sent[0]
     assert daily.read_rows(tmp_path / daily.REQUESTS_DONE)[0]["status"] == "waiting"
     assert daily.last_failed_request(tmp_path) is None
+
+
+def test_unsourceable_topic_makes_way_for_the_next_one_once(tmp_path):
+    topics(tmp_path, [row("race", "R1", "sports"), row("race", "R2", "sports"),
+                      row("race", "R3", "sports")])
+
+    def no_data(root, d):  # research gave up on every topic
+        (d / daily.NO_DATA).touch()
+        raise daily.StepError("research gave up")
+    sent = []
+    code = daily.run_all(tmp_path, MON, steps=[("research", no_data), ("render", ok),
+                                               ("upload", uploaded)],
+                         notify=sent.append, slots=["race"])
+    assert code == 1
+    done = daily.read_rows(tmp_path / "topics_done.csv")
+    assert [(r["title"], r["status"]) for r in done] == [("R1", "failed"), ("R2", "failed")]
+    assert [r["title"] for r in daily.read_rows(tmp_path / "topics.csv")] == ["R3"]
+    assert sum("trying the next race topic" in m for m in sent) == 1
+
+
+def test_other_failures_do_not_try_another_topic(tmp_path):
+    topics(tmp_path, [row("race", "R1", "sports"), row("race", "R2", "sports")])
+
+    def broken(root, d):
+        raise daily.StepError("render exited 1")
+    assert daily.run_all(tmp_path, MON, steps=[("research", ok), ("render", broken)],
+                         notify=lambda m: None, slots=["race"]) == 1
+    assert [r["title"] for r in daily.read_rows(tmp_path / "topics.csv")] == ["R2"]

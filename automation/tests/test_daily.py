@@ -206,12 +206,13 @@ def test_research_retries_on_usage_limit(tmp_path):
 def test_research_fails_without_metadata(tmp_path):
     d = tmp_path / "v"
     d.mkdir()
-    run = FakeRun([(0, "{}")])
+    run = FakeRun([(0, json.dumps({"result": "No per-year source for Test wins; stopped."}))])
     try:
         daily.research(tmp_path, d, run=run, sleep=lambda s: None)
         assert False, "expected StepError"
     except daily.StepError as e:
-        assert "metadata.json" in str(e)
+        assert "gave up" in str(e) and "No per-year source for Test wins" in str(e)
+    assert (d / daily.NO_DATA).exists()
 
 
 def test_research_fails_on_validate_error(tmp_path):
