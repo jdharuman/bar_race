@@ -16,7 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -24,6 +24,8 @@ import daily  # noqa: E402
 
 ROOT = Path(os.environ.get("BARRACE_REPO") or Path(__file__).resolve().parent.parent)
 MAX_TITLE, MAX_COMMENT = 100, 500
+PREVIEW_N = 10  # /preview lists this many recent Shorts
+RUN_HOUR = 2  # the n8n "barrace daily video" trigger, local time
 STYLE_BUTTONS = [("Race chart", "style:race"), ("Pillars", "style:pillars"),
                  ("Stocks", "style:stocks"), ("Compare", "style:compare")]
 
@@ -37,17 +39,24 @@ REPORTED = (0, 1, 2, 4, 70)  # exit codes after which `daily.py request` already
 HELP = ("barrace bot\n"
         "/new – make a one-off video now (not from topics.csv)\n"
         "/status – is a video being made right now?\n"
+        "/topics – what the next run makes, and how many topics are left\n"
+        "/preview – watch a recent Short here (graph Shorts arrive by themselves)\n"
         "/retry – retry the last failed request (finished steps are kept)\n"
         "/cancel – stop filling in /new\n"        "Mondays: trend ideas arrive here; ✅ adds one to the top of topics.csv.\n"
         "The daily 02:00 video from topics.csv keeps running as usual.")
 COMMANDS = [("new", "Make a one-off video"), ("status", "Is a video being made?"),
+            ("topics", "Next run and topics left"), ("preview", "Watch a recent Short here"),
             ("retry", "Retry the last failed request"), ("cancel", "Stop filling in /new"),
             ("help", "What this bot does")]
 
 
 class Telegram:
     def __init__(self, token: str):
+        self.token = token
         self.base = f"https://api.telegram.org/bot{token}/"
+
+    def send_video(self, chat: int, path: Path, caption: str) -> None:
+        daily.telegram_video(self.token, chat, path, caption)
 
     def call(self, method: str, **params):
         req = urllib.request.Request(self.base + method, json.dumps(params).encode(),
@@ -85,10 +94,13 @@ def launch(root: Path, args: list[str], log_dir: Path) -> subprocess.Popen:
 
 
 class Bot:
-    def __init__(self, tg, owner: int, root: Path = ROOT, start=launch, today=date.today):
+    def __init__(self, tg, owner: int, root: Path = ROOT, start=launch, today=date.today,
+                 now=None):
         self.tg, self.owner, self.root, self.start, self.today = tg, owner, root, start, today
+        self.now = now or (lambda: datetime.now().astimezone())
         self.forms: dict[int, dict] = {}      # chat id -> {"step", "row"}
         self.children: list[subprocess.Popen] = []
+        self.previews: list[Path] = []        # folders offered by the last /preview
 
     # -- plumbing --
     def say(self, chat: int, text: str, markup=None):
@@ -127,6 +139,10 @@ class Bot:
             self.say(chat, "Cancelled." if self.forms.pop(chat, None) else "Nothing to cancel.")
         elif cmd == "/status":
             self.say(chat, self.status())
+        elif cmd == "/topics":
+            self.say(chat, self.topics())
+        elif cmd == "/preview":
+            self.preview_menu(chat)
         elif cmd == "/retry":
             d = daily.last_failed_request(self.root)
             if d is None:
@@ -145,10 +161,99 @@ class Bot:
         q = daily.Quota(self.root)
         return (f"{busy}\nFinished today: {n}\n"
                 f"YouTube quota today: {q.used:,} of {q.limit:,} units used "
-                f"(a video pair needs about {2 * daily.COST_VIDEO + daily.COST_THUMB:,}).")
+                f"(a Short needs {daily.COST_VIDEO:,}).")
+
+    def topics(self) -> str:
+        try:
+            topics = daily.read_rows(self.root / "topics.csv")
+            done = daily.read_rows(self.root / "topics_done.csv")
+        except daily.BadFile as e:
+            return f"❌ {e}"
+        now = self.now()
+        run = now.replace(hour=RUN_HOUR, minute=0, second=0, microsecond=0)
+        if run <= now:
+            run += timedelta(days=1)
+        q = daily.Quota(self.root, day=daily.quota_day(run))  # spent earlier that Pacific day
+        left = q.left()
+        quiz_done = [r.get("title", "") for r in done if r.get("style", "").lower() == "quiz"]
+        plan = daily.plan_night(topics, quiz_done, run.date(), left)
+        theme = daily.THEMES[daily.theme_of(run.date())]
+        made = [r for _, r in plan if r]
+        lines = [f"📅 Next run: {run:%a %d %b, %H:%M} · theme {theme}",
+                 f"YouTube quota for it: {left:,} of {q.limit:,} units left → {len(made)} Short{'' if len(made) == 1 else 's'}", ""]
+        for slot, r in plan:
+            if slot == "quiz":
+                continue
+            if r is None:
+                lines.append(f"• {slot}: (no topic – slot skipped)")
+            else:
+                extra = ", ".join(x for x in (r.get("style", "").lower(), r.get("theme", ""),
+                                              r.get("look", "")) if x)
+                lines.append(f"• {slot}: {r.get('title') or r.get('youtube_url')} ({extra})"
+                             + (" – redo" if r.get("comment") else ""))
+        quizzes = [r for slot, r in plan if slot == "quiz"]
+        if quizzes:
+            lines.append(f"• quiz ×{len(quizzes)}:")
+            shown = quizzes if len(quizzes) <= 8 else quizzes[:6]
+            lines += [f"   {r['title']}" + (" (auto)" if r.get("generated") else "") for r in shown]
+            if len(shown) < len(quizzes):
+                lines.append(f"   … and {len(quizzes) - len(shown)} more")
+        counts = {}
+        for r in topics:
+            st = r.get("style", "").lower() or "?"
+            counts[st] = counts.get(st, 0) + 1
+        themes = {}
+        for r in topics:
+            if r.get("style", "").lower() != "quiz":
+                th = r.get("theme", "").lower() or "no theme"
+                themes[th] = themes.get(th, 0) + 1
+        lines += ["", f"📋 topics.csv: {len(topics)} topics left",
+                  " · ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "empty"]
+        if themes:
+            lines.append("Graph topics by theme: "
+                         + " · ".join(f"{k} {v}" for k, v in sorted(themes.items())))
+        n_line = counts.get("stocks", 0) + counts.get("compare", 0)
+        last = [f"race {counts.get('race', 0)}", f"pillars {counts.get('pillars', 0)}",
+                f"lines {n_line}"]
+        if len(quizzes):
+            last.append(f"quiz {counts.get('quiz', 0) // len(quizzes)} (then auto titles)")
+        lines.append("Nights each slot lasts: " + " · ".join(last))
+        return "\n".join(lines)
+
+    def recent_shorts(self, n: int = PREVIEW_N) -> list[Path]:
+        shorts = [p for p in (self.root / "videos").glob("*/out/short.mp4")]
+        shorts.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return [p.parent.parent for p in shorts[:n]]
+
+    def preview_menu(self, chat: int) -> None:
+        self.previews = self.recent_shorts()
+        if not self.previews:
+            self.say(chat, "No Short made yet.")
+            return
+        rows = [[(("🧩 " if daily.is_quiz(d) else "📊 ") + d.name[11:][:40], f"pv:{i}")]
+                for i, d in enumerate(self.previews)]
+        self.say(chat, "Which Short? (newest first; it arrives here as a video)", buttons(*rows))
+
+    def send_preview(self, chat: int, data: str) -> None:
+        try:
+            d = self.previews[int(data[3:])]
+        except (ValueError, IndexError):
+            self.say(chat, "That list has expired. Send /preview again.")
+            return
+        path = d / "out" / "short.mp4"
+        if not path.exists():
+            self.say(chat, f"{d.name}: the Short file is gone.")
+            return
+        try:
+            self.tg.send_video(chat, path, f"🎬 {d.name}")
+        except Exception as e:
+            self.say(chat, f"❌ Could not send {d.name}: {e}")
 
     # -- form --
     def on_button(self, chat: int, data: str) -> None:
+        if data.startswith("pv:"):
+            self.send_preview(chat, data)
+            return
         if data.startswith("scout:"):  # weekly trend scout idea: add / skip
             import scout
             self.say(chat, scout.decide(self.root, data))

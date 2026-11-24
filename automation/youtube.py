@@ -35,21 +35,23 @@ def _need(d: Path, quota, units: int) -> None:
         raise StepError(f"waiting for YouTube quota ({quota.left()} of {quota.limit} units left today)")
 
 
-def upload_all(d: Path, yt, quota=None) -> dict:
-    """Upload main + Short and the thumbnail, resuming from upload.json; a quiz has a
-    Short only (no main, no custom thumbnail). With `quota`, never starts a call the
-    day's remaining units can't cover."""
+def upload_all(d: Path, yt, quota=None, kinds=None) -> dict:
+    """Upload the made formats (default: daily.formats(d), i.e. the Short only unless
+    BARRACE_MAIN=on), plus the main's thumbnail, resuming from upload.json. With
+    `quota`, never starts a call the day's remaining units can't cover."""
+    from daily import formats
     meta = json.loads((d / "metadata.json").read_text())
     state_path = d / "upload.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
-    for key in [k for k in ("main", "short") if k in meta]:
+    keys = [k for k in (kinds or formats(d)) if k in meta]
+    for key in keys:
         if not state.get(key):
             _need(d, quota, COST_VIDEO)
             state[key] = yt.insert(d / "out" / f"{key}.mp4", build_body(meta[key], key == "short"))
             state_path.write_text(json.dumps(state))
             if quota is not None:
                 quota.spend(COST_VIDEO)
-    if "main" in meta and not state.get("thumbnail"):
+    if "main" in keys and not state.get("thumbnail"):
         _need(d, quota, COST_THUMB)
         yt.set_thumbnail(state["main"], d / "out" / "thumb.png")
         state["thumbnail"] = True

@@ -119,6 +119,31 @@ def build(title: str, n_questions: int = QUESTIONS) -> tuple[str, str, list[dict
     return kind, cat, qs
 
 
+# Display names, in rotation order for generated titles.
+SET_NAMES = {("flag", "europe"): "Europe", ("flag", "asia"): "Asia", ("flag", "africa"): "Africa",
+             ("flag", "americas"): "Americas", ("capital", "world"): "World",
+             ("flag", "world mix"): "World Mix", ("flag", "easy mode"): "Easy Mode",
+             ("capital", "europe"): "Europe", ("flag", "oceania and islands"): "Oceania and Islands",
+             ("flag", "hard mode"): "Hard Mode", ("capital", "asia"): "Asia",
+             ("flag", "look-alikes"): "Look-Alikes", ("capital", "africa"): "Africa",
+             ("capital", "indian states"): "Indian States"}
+
+
+def next_title(used: list[str]) -> str:
+    """The next quiz title after `used`: the set whose pool has been covered the least
+    (so big sets come up more often), numbered one past its highest number so far."""
+    count, top = {k: 0 for k in SET_NAMES}, {k: 0 for k in SET_NAMES}
+    for t in used:
+        try:
+            kind, cat, n = parse_title(t)
+        except QuizError:
+            continue
+        count[(kind, cat)] += 1
+        top[(kind, cat)] = max(top[(kind, cat)], n)
+    key = min(SET_NAMES, key=lambda k: count[k] * QUESTIONS / len(pool(*k)))
+    return f"Guess the {key[0].title()}: {SET_NAMES[key]} #{top[key] + 1}"
+
+
 def fetch_flag(iso2: str, dest: Path, cache: Path) -> None:
     cached = cache / f"{iso2}.png"
     if not cached.exists():

@@ -15,6 +15,9 @@ class FakeTG:
         self.calls.append((method, params))
         return True
 
+    def send_video(self, chat, path, caption):
+        self.calls.append(("sendVideo", {"chat_id": chat, "path": path, "caption": caption}))
+
     def texts(self):
         return [p["text"] for m, p in self.calls if m == "sendMessage"]
 
@@ -215,3 +218,74 @@ def test_status_shows_quota(tmp_path):
     daily.Quota(tmp_path).spend(3250)
     b.handle(msg("/status"))
     assert "3,250 of 10,000" in tg.texts()[-1]
+
+
+def test_topics_shows_next_run_and_what_is_left(tmp_path, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    monkeypatch.delenv("BARRACE_MAIN")
+    monkeypatch.delenv("BARRACE_QUIZ")
+    rows = [{"style": "race", "title": "R india", "theme": "india"},
+            {"style": "race", "title": "R sports", "theme": "sports"},
+            {"style": "compare", "title": "A vs B", "theme": "", "look": "neon"},
+            {"style": "quiz", "title": "Guess the Flag: Europe #1"}]
+    daily.write_rows(tmp_path / "topics.csv", daily.TOPIC_COLS, rows)
+    b, tg, _ = make(tmp_path)
+    cet = timezone(timedelta(hours=1))
+    b.now = lambda: datetime(2026, 11, 23, 15, 0, tzinfo=cet)  # Monday afternoon
+    b.handle(msg("/topics"))
+    t = tg.texts()[-1]
+    assert "Next run: Tue 24 Nov, 02:00 · theme India & Tamil Nadu" in t
+    assert "• race: R india (race, india)" in t
+    assert "• pillars: (no topic – slot skipped)" in t
+    assert "• lines: A vs B (compare, neon)" in t
+    # 10,000 units: 2 graph Shorts (3,200) leave room for 4 quizzes; 3 are generated
+    assert "→ 6 Shorts" in t and "quiz ×4" in t and t.count("(auto)") == 3
+    assert "Guess the Flag: Europe #1\n" in t
+    assert "topics.csv: 4 topics left" in t and "compare 1 · quiz 1 · race 2" in t
+    assert "Graph topics by theme: india 1 · no theme 1 · sports 1" in t
+
+
+def test_topics_counts_quota_already_used_in_the_same_pacific_day(tmp_path, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    monkeypatch.delenv("BARRACE_MAIN")
+    daily.write_rows(tmp_path / "topics.csv", daily.TOPIC_COLS,
+                     [{"style": "race", "title": "R"}])
+    b, tg, _ = make(tmp_path)
+    cet = timezone(timedelta(hours=1))
+    b.now = lambda: datetime(2026, 11, 23, 20, 0, tzinfo=cet)
+    daily.Quota(tmp_path, day=daily.quota_day(datetime(2026, 11, 24, 2, 0, tzinfo=cet))).spend(3200)
+    b.handle(msg("/topics"))
+    assert "6,800 of 10,000 units left → 1 Short\n" in tg.texts()[-1]  # quizzes off in tests
+
+
+def _short(root, name, quiz=False, age=0):
+    import json
+    import os
+    d = root / "videos" / name
+    (d / "out").mkdir(parents=True)
+    (d / "out" / "short.mp4").write_bytes(b"mp4")
+    (d / "topic.json").write_text(json.dumps({"row": {"style": "quiz" if quiz else "race"}}))
+    os.utime(d / "out" / "short.mp4", (1000 - age, 1000 - age))
+    return d
+
+
+def test_preview_lists_recent_shorts_and_sends_the_tapped_one(tmp_path):
+    b, tg, _ = make(tmp_path)
+    _short(tmp_path, "2026-11-24-indian-states-by-gdp", age=5)
+    quiz = _short(tmp_path, "2026-11-24-guess-the-flag-europe-1", quiz=True, age=1)
+    b.handle(msg("/preview"))
+    assert tg.last_buttons() == ["pv:0", "pv:1"]
+    labels = [bt["text"] for m, p in tg.calls if m == "sendMessage" and "reply_markup" in p
+              for row in p["reply_markup"]["inline_keyboard"] for bt in row]
+    assert labels == ["🧩 guess-the-flag-europe-1", "📊 indian-states-by-gdp"]
+    b.handle(tap("pv:0"))
+    sent = [p for m, p in tg.calls if m == "sendVideo"]
+    assert sent == [{"chat_id": OWNER, "path": quiz / "out" / "short.mp4",
+                     "caption": "🎬 2026-11-24-guess-the-flag-europe-1"}]
+
+
+def test_preview_with_nothing_made_or_an_old_button(tmp_path):
+    b, tg, _ = make(tmp_path)
+    b.handle(msg("/preview"))
+    b.handle(tap("pv:3"))
+    assert tg.texts() == ["No Short made yet.", "That list has expired. Send /preview again."]

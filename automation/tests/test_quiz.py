@@ -163,27 +163,33 @@ def test_quiz_report_names_the_short_only():
     assert "Short: https://studio.youtube.com/video/abc/edit" in msg and "Main" not in msg
 
 
-def test_quiz_slot_waits_for_quota(tmp_path, monkeypatch):
-    monkeypatch.delenv("BARRACE_QUIZ", raising=False)
-    monkeypatch.setenv("BARRACE_QUOTA", "10000")
-    assert not daily.quiz_slot_on(tmp_path)
-    monkeypatch.setenv("BARRACE_QUOTA", str(daily.QUIZ_MIN_QUOTA))
-    assert daily.quiz_slot_on(tmp_path)
-    monkeypatch.setenv("BARRACE_QUIZ", "off")
-    assert not daily.quiz_slot_on(tmp_path)
-    monkeypatch.setenv("BARRACE_QUOTA", "10000")
-    monkeypatch.setenv("BARRACE_QUIZ", "on")
-    assert daily.quiz_slot_on(tmp_path)
+def test_next_title_rotates_sets_and_continues_numbers():
+    assert quiz.next_title([]) == "Guess the Flag: Europe #1"
+    assert quiz.next_title(["Guess the Flag: Europe #7"]).startswith("Guess the Flag: Asia #1")
+    plan = [r["title"] for r in daily.read_rows(ROOT / "topics.plan.csv") if r["style"] == "quiz"]
+    used = list(plan)
+    for _ in range(60):
+        t = quiz.next_title(used)
+        assert t not in used
+        quiz.build(t)  # every generated title is a valid quiz
+        used.append(t)
+    new = collections.Counter(quiz.parse_title(t)[:2] for t in used[len(plan):])
+    assert min(quiz.parse_title(t)[2] for t in used[len(plan):]) > 26  # continues the plan
+    assert new.most_common(1)[0][0] == ("flag", "world mix")  # biggest pool, most often
 
 
-def _night(tmp_path, monkeypatch, quota):
-    monkeypatch.delenv("BARRACE_QUIZ", raising=False)
+def _night(tmp_path, monkeypatch, quota, quiz_env=None):
+    monkeypatch.delenv("BARRACE_MAIN", raising=False)
+    if quiz_env:
+        monkeypatch.setenv("BARRACE_QUIZ", quiz_env)
+    else:
+        monkeypatch.delenv("BARRACE_QUIZ", raising=False)
     monkeypatch.setenv("BARRACE_QUOTA", str(quota))
-    rows = [{"style": "race", "title": "R", "theme": "sports"},
-            {"style": "quiz", "title": "Guess the Flag: Europe #1"}]
-    daily.write_rows(tmp_path / "topics.csv", daily.TOPIC_COLS, rows)
+    daily.write_rows(tmp_path / "topics.csv", daily.TOPIC_COLS,
+                     [{"style": "race", "title": "R", "theme": "sports"}])
 
-    def up(root, d):
+    def up(root, d):  # a Short-only upload, as youtube.upload_all now does
+        daily.Quota(root).spend(daily.COST_VIDEO)
         (d / "upload.json").write_text(json.dumps({"short": "s"}))
     steps = [("research", lambda r, d: None), ("render", lambda r, d: None), ("upload", up)]
     sent = []
@@ -192,10 +198,62 @@ def _night(tmp_path, monkeypatch, quota):
     return [r["title"] for r in daily.read_rows(tmp_path / "topics_done.csv")], sent
 
 
-def test_night_adds_the_quiz_only_with_enough_quota(tmp_path, monkeypatch):
+def test_quiz_shorts_fill_the_quota_left_after_graph_shorts(tmp_path, monkeypatch):
     done, sent = _night(tmp_path, monkeypatch, 10000)
+    assert done[0] == "R" and len(done) == 6  # 1 graph Short + 5 quizzes = 9,600 units
+    assert all(t.startswith("Guess the") for t in done[1:]) and len(set(done)) == 6
+    assert not any("no quiz" in m for m in sent)
+    (tmp_path / "big").mkdir()
+    done, _ = _night(tmp_path / "big", monkeypatch, 40000)
+    assert len(done) == 25  # 40,000 // 1,600
+
+
+def test_quiz_off_makes_graph_shorts_only(tmp_path, monkeypatch):
+    done, _ = _night(tmp_path, monkeypatch, 10000, quiz_env="off")
     assert done == ["R"]
-    assert not any("quiz" in m for m in sent)  # a switched-off slot is not "missing"
-    (tmp_path / "more").mkdir()
-    done, _ = _night(tmp_path / "more", monkeypatch, 20000)
-    assert done == ["R", "Guess the Flag: Europe #1"]
+
+
+def test_graph_videos_are_short_only_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("BARRACE_MAIN")
+    d = tmp_path / "videos" / "g"
+    d.mkdir(parents=True)
+    (d / "topic.json").write_text(json.dumps({"row": {"style": "race", "title": "R"}}))
+    calls = []
+    daily.render(tmp_path, d, run=lambda cmd, **kw: calls.append(cmd) or
+                 SimpleNamespace(returncode=0, stdout="", stderr=""))
+    assert [c[1:] for c in calls] == [["render", str(d), "--format", "short"]]
+    (d / "out").mkdir()
+    (d / "out" / "short.mp4").write_text("x")
+    (d / "metadata.json").write_text(json.dumps({"main": {"title": "M"}, "short": {"title": "S"}}))
+    yt = FakeYT()
+    state = youtube.upload_all(d, yt, daily.Quota(tmp_path, limit=10000, day="2026-11-23"))
+    assert yt.inserted == ["short.mp4"] and yt.thumbs == [] and state == {"short": "id-short"}
+    msg = daily.report({"style": "race", "title": "R", "youtube_url": "", "theme": "sports"},
+                       state, "uploaded", "", "")["message"]
+    assert "Short:" in msg and "Main" not in msg and "Playlist: Sports" in msg
+
+
+def test_graph_shorts_are_sent_to_telegram_but_quiz_shorts_are_not(tmp_path):
+    sent = []
+    for name, quiz in (("graph", False), ("quiz", True)):
+        d = tmp_path / name
+        (d / "out").mkdir(parents=True)
+        (d / "out" / "short.mp4").write_bytes(b"mp4")
+        (d / "topic.json").write_text(json.dumps(
+            {"row": {"title": f"T {name}", "style": "quiz" if quiz else "race"}}))
+        code = daily.run_steps(tmp_path, d, [], [].append,
+                               lambda status: {"message": status},
+                               send_video=lambda p, c: sent.append((p, c)))
+        assert code == 0
+    assert sent == [(tmp_path / "graph" / "out" / "short.mp4", "🎬 T graph (Short preview)")]
+
+
+def test_telegram_upload_body_carries_fields_and_the_file(tmp_path):
+    f = tmp_path / "short.mp4"
+    f.write_bytes(b"\x00VIDEO\x01")
+    body, ctype = daily.multipart({"chat_id": 5, "caption": "hi"}, "video", f)
+    boundary = ctype.split("boundary=")[1]
+    assert ctype.startswith("multipart/form-data")
+    assert b'name="chat_id"\r\n\r\n5\r\n' in body
+    assert b'name="video"; filename="short.mp4"' in body and b"\x00VIDEO\x01" in body
+    assert body.endswith(f"--{boundary}--\r\n".encode())

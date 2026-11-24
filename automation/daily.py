@@ -31,10 +31,22 @@ THEMES = {"sports": "Sports", "india": "India & Tamil Nadu", "economy": "Economy
           "earth": "Earth & Space", "tech": "Tech & Cars", "history": "History & Countries",
           "people": "People & World"}
 WEEK = ["sports", "india", "economy", "earth", "tech", "history", "people"]  # Mon..Sun
-# One video pair per slot per night, in this order. The quiz slot (a Short only) runs
-# only when the YouTube quota covers it (see quiz_slot_on).
+# One video per graph slot per night, in this order; then quiz Shorts fill whatever
+# YouTube quota is left (see run_all). The quiz slot can repeat; the others run once.
 SLOTS = {"race": ("race",), "pillars": ("pillars",), "lines": LINE_STYLES, "quiz": ("quiz",)}
-QUIZ_MIN_QUOTA = 11400  # 3 pairs (~9,750 units) + one Short (1,600)
+GRAPH_SLOTS = ["race", "pillars", "lines"]
+QUIZ_MAX_PER_NIGHT = 40  # safety cap; the quota is the real limit
+
+
+def main_on() -> bool:
+    """16:9 main videos (+ thumbnail) are off: only Shorts are made and uploaded.
+    BARRACE_MAIN=on in ~/.config/barrace/env brings the main video back."""
+    return os.environ.get("BARRACE_MAIN", "").lower() == "on"
+
+
+def formats(d: Path) -> tuple[str, ...]:
+    """What gets rendered and uploaded for a video folder."""
+    return ("main", "short") if main_on() and not is_quiz(d) else ("short",)
 
 
 def theme_of(day: date) -> str:
@@ -391,7 +403,7 @@ def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
 
 def render(root: Path, d: Path, run=subprocess.run) -> None:
     bb = barrace_bin(root)
-    cmds = ([[bb, "render", str(d), "--format", "short"]] if is_quiz(d) else
+    cmds = ([[bb, "render", str(d), "--format", "short"]] if formats(d) == ("short",) else
             [[bb, "render", str(d), "--format", "both"], [bb, "thumb", str(d)]])
     for cmd in cmds:
         r = run(cmd, cwd=root, capture_output=True, text=True)
@@ -439,9 +451,11 @@ def report(row: dict, up: dict, status: str, err: str, retry_hint: str, tag: str
     name = row["title"] or row["youtube_url"]
     links = {k: studio(up[k]) for k in ("main", "short") if up.get(k)}
     playlist = THEMES.get(row.get("theme", "").lower())
-    if status == "uploaded" and row.get("style") == "quiz":
+    if status == "uploaded" and not links.get("main"):  # Short only
         msg = (f"✅ Ready to review{tag}: {name}\nShort: {links.get('short', '-')}\n"
                "Watch it, then publish in YouTube Studio.")
+        if playlist and row.get("style") != "quiz":
+            msg += f"\nPlaylist: {playlist}"
     elif status == "uploaded":
         msg = (f"✅ Ready to review{tag}: {name}\nMain: {links.get('main', '-')}\n"
                f"Short: {links.get('short', '-')}\nWatch both, then publish in YouTube Studio.")
@@ -507,6 +521,58 @@ def send_telegram(text: str) -> None:
         print(f"telegram send failed: {e}", file=sys.stderr)
 
 
+TG_VIDEO_MAX = 49 * 1024 * 1024  # bot API upload limit is 50 MB
+
+
+def multipart(fields: dict, file_field: str, path: Path) -> tuple[bytes, str]:
+    """multipart/form-data body (fields + one mp4 file) for Telegram uploads."""
+    boundary = f"barrace{os.urandom(8).hex()}"
+    parts = []
+    for k, v in fields.items():
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; '
+                 f'filename="{path.name}"\r\nContent-Type: video/mp4\r\n\r\n'.encode())
+    parts.append(path.read_bytes())
+    parts.append(f"\r\n--{boundary}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def telegram_video(token: str, chat, path: Path, caption: str) -> None:
+    """Upload one mp4 to a Telegram chat (raises on failure)."""
+    import urllib.request
+    if path.stat().st_size > TG_VIDEO_MAX:
+        raise RuntimeError(f"{path.name} is over Telegram's 50 MB bot limit")
+    body, ctype = multipart({"chat_id": chat, "caption": caption[:1000],
+                             "supports_streaming": "true"}, "video", path)
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendVideo", body,
+                                 {"Content-Type": ctype})
+    with urllib.request.urlopen(req, timeout=300) as r:
+        if not json.loads(r.read()).get("ok"):
+            raise RuntimeError("sendVideo was refused")
+
+
+def send_telegram_video(path: Path, caption: str) -> None:
+    """Send a Short to TELEGRAM_CHAT_ID for review on the phone. Never raises."""
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    if not (token and chat and path.exists()):
+        return
+    try:
+        telegram_video(token, chat, path, caption)
+    except Exception as e:  # a lost preview must not fail the run
+        print(f"telegram video send failed: {e}", file=sys.stderr)
+
+
+def send_preview(d: Path, send_video) -> None:
+    """Graph Shorts go to Telegram automatically; quiz Shorts only via the bot's /preview."""
+    if is_quiz(d):
+        return
+    try:
+        title = json.loads((d / "topic.json").read_text())["row"].get("title", "") or d.name
+    except (OSError, ValueError, KeyError):
+        title = d.name
+    send_video(d / "out" / "short.mp4", f"🎬 {title} (Short preview)")
+
+
 LOCK_POLL_S = 60
 DAILY_WAIT_S = 4 * 3600    # the daily video waits this long for a Telegram request to finish
 REQUEST_WAIT_S = 6 * 3600  # a Telegram request waits this long for a running video
@@ -530,14 +596,24 @@ def run_all(root: Path, today: date, steps=None, notify=send_telegram,
     if upload_fn:
         upload_waiting(root, upload_fn, notify)
     codes, skipped = [], []
+    fill_quiz = slots is None and quiz_on()
     if slots is None:
-        slots = [s for s in SLOTS if s != "quiz" or quiz_slot_on(root)]
+        slots = GRAPH_SLOTS
     for slot in slots:
         code = run_slot(root, today, slot, steps, notify, sleep, wait_s)
         if code == 3:
             skipped.append(slot)
         else:
             codes.append(code)
+    if fill_quiz:
+        made = 0
+        while made < QUIZ_MAX_PER_NIGHT and Quota(root).left() >= COST_VIDEO:
+            top_up_quiz(root)
+            code = run_slot(root, today, "quiz", steps, notify, sleep, wait_s)
+            codes.append(code)
+            if code != 0:  # a failing quiz would fail the same way again tonight
+                break
+            made += 1
     if skipped and codes:
         notify(f"barrace: no {' / '.join(skipped)} topic in topics.csv "
                f"(today's theme: {THEMES[theme_of(today)]}); add some to fill those slots.")
@@ -550,12 +626,54 @@ def run_all(root: Path, today: date, steps=None, notify=send_telegram,
     return 0
 
 
-def quiz_slot_on(root: Path) -> bool:
-    """BARRACE_QUIZ=on/off forces it; default: on once the daily quota covers it."""
-    force = os.environ.get("BARRACE_QUIZ", "").lower()
-    if force in ("on", "off"):
-        return force == "on"
-    return Quota(root).limit >= QUIZ_MIN_QUOTA
+def plan_night(topics: list[dict], done_titles: list[str], night: date, left: int) -> list:
+    """What the run on `night` would make, as (slot, row) pairs (row None: slot empty),
+    if every video works. Mirrors run_all: graph slots, then quizzes while `left`
+    quota units last. Generated quiz rows have "generated": True."""
+    import quiz
+    rows, plan, theme = list(topics), [], theme_of(night)
+    per_video = COST_VIDEO * 2 + COST_THUMB if main_on() else COST_VIDEO
+    for slot in GRAPH_SLOTS:
+        i = choose(rows, SLOTS[slot], theme)
+        plan.append((slot, None if i is None else rows.pop(i)))
+        if i is not None:
+            left -= per_video
+    if quiz_on():
+        quiz_titles = [r.get("title", "") for r in topics if r.get("style", "").lower() == "quiz"]
+        quiz_titles += done_titles
+        n = 0
+        while left >= COST_VIDEO and n < QUIZ_MAX_PER_NIGHT:
+            i = choose(rows, ("quiz",), theme)
+            if i is None:
+                row = {"style": "quiz", "title": quiz.next_title(quiz_titles), "generated": True}
+                quiz_titles.append(row["title"])
+            else:
+                row = rows.pop(i)
+            plan.append(("quiz", row))
+            left -= COST_VIDEO
+            n += 1
+    return plan
+
+
+def quiz_on() -> bool:
+    """Quiz Shorts fill the quota left after the graph slots; BARRACE_QUIZ=off stops them."""
+    return os.environ.get("BARRACE_QUIZ", "").lower() != "off"
+
+
+def top_up_quiz(root: Path) -> None:
+    """Make sure topics.csv has a quiz row: append the next generated title if not."""
+    import quiz
+    topics = read_rows(root / "topics.csv")
+    if any(r.get("style", "").lower() == "quiz" for r in topics):
+        return
+    try:
+        done = read_rows(root / "topics_done.csv")
+    except BadFile:
+        done = []
+    title = quiz.next_title([r.get("title", "") for r in topics + done
+                             if r.get("style", "").lower() == "quiz"])
+    topics.append({"style": "quiz", "title": title})
+    write_rows(root / "topics.csv", TOPIC_COLS, topics)
 
 
 def reject_bad_rows(root: Path, notify) -> None:
@@ -600,7 +718,8 @@ def _run_slot_once(root: Path, today: date, slot: str, steps, notify, sleep,
     return run_steps(root, d, steps, notify, lambda status: finish(root, d, status)), d
 
 
-def run_steps(root: Path, d: Path, steps, notify, finish_fn) -> int:
+def run_steps(root: Path, d: Path, steps, notify, finish_fn, send_video=None) -> int:
+    send_video = send_video or send_telegram_video
     for name, fn in steps:
         marker = d / f".ok-{name}"
         if marker.exists():  # finished in an earlier, failed run of this folder
@@ -610,11 +729,13 @@ def run_steps(root: Path, d: Path, steps, notify, finish_fn) -> int:
             if (d / QUOTA_WAIT).exists():  # not a failure: the upload is held for quota
                 (d / "error.txt").unlink(missing_ok=True)
                 notify(finish_fn("waiting")["message"])
+                send_preview(d, send_video)
                 return 0
             notify(finish_fn("failed")["message"])
             return 1
         marker.touch()
     notify(finish_fn("uploaded")["message"])
+    send_preview(d, send_video)
     return 0
 
 

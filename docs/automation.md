@@ -41,13 +41,14 @@ any error.
 
 ## Reviewing and fixing a video
 
-1. The Telegram message has Studio links for the main video and the Short.
+1. The Telegram message has the Studio link for the Short (and the main video
+   when `BARRACE_MAIN=on`).
 2. Good: in Studio, set visibility to Public (or schedule it).
 3. Wrong: add the same topic again **at the top** of `topics.csv` with a
    comment, e.g.
    `race,Largest Economies by GDP,,"India missing before 1990; Japan 1995 value too high"`.
    The next run copies the previous folder, fixes what the comment says, and
-   uploads a new private pair. Delete the old private videos in Studio.
+   uploads a new private Short. Delete the old private videos in Studio.
 4. A failed run (❌ message): fix the cause if it's setup (see below), then put
    the row back at the top **without a comment**. The retry continues in the
    same folder and skips the steps that already worked, so a half-finished
@@ -60,28 +61,37 @@ workflow", or on the machine:
 
 ## Nightly slots, weekly themes and the YouTube quota
 
-Each night makes up to **three video pairs**, one per slot, in this order:
-**race**, **pillars**, **lines** (`stocks` or `compare`). Each slot takes the
+**Shorts only.** Since 2026-11-23 the nightly run and Telegram requests make
+and upload only the 9:16 Short (the 16:9 main videos got no views). The graph
+research is unchanged, so `BARRACE_MAIN=on` in `~/.config/barrace/env` brings
+the main video and thumbnail back for every new video.
+
+Each night first makes one graph Short per slot, in this order: **race**,
+**pillars**, **lines** (`stocks` or `compare`). Each slot takes the
 first topic of its kind whose `theme` is today's theme, else the first one
 without a theme, else the first one of that kind. A slot with no topic is
 skipped (one Telegram note). The success message names the playlist
-(`Playlist: Sports`); add the videos to it in Studio.
+(`Playlist: Sports`); add the videos to it in Studio. If research finds no
+trustworthy data, the slot tries its next topic once.
+
+Then **quiz Shorts fill the quota that is left**: one after another while the
+day still has 1,600 units, so 3 a night at 10,000 (3 graph Shorts + 3 quizzes =
+9,600) and 22 at 40,000. When `topics.csv` has no quiz row, the run appends the
+next generated title (`quiz.next_title`: the set whose countries have been
+used least, numbered after the highest number so far), so quizzes never run
+out. A failing quiz stops the quizzes for that night. `BARRACE_QUIZ=off` in
+the env file turns them off.
 
 YouTube gives the API project **10,000 units a day** (reset at midnight
-Pacific, 09:00 in Berlin). A pair costs about 3,250 (1,600 per video + 50 for
-the thumbnail), so three pairs fit. The run keeps a ledger in
+Pacific, 09:00 in Berlin). A Short costs 1,600 (a main video another 1,600
+plus 50 for its thumbnail). The run keeps a ledger in
 `videos/.quota.json` and never starts an upload the day can't cover: the
 video is made, the message says "⏳ upload waiting", and it uploads first
-thing in the next run. Telegram requests use the same day's quota. When
+thing in the next run. Telegram requests use the same day's quota, so a
+request in the evening (Berlin) leaves fewer quizzes for the night. When
 Google raises the quota, set `BARRACE_QUOTA=<new limit>` in
-`~/.config/barrace/env` and `systemctl --user restart n8n barrace-bot`.
-`/status` in the bot shows today's use.
-
-**Quiz slot (4th, Short only).** A `quiz` row makes one 9:16 Short (no main
-video, no custom thumbnail: 1,600 units). The slot runs only when
-`BARRACE_QUOTA` is at least 11,400 (three pairs + one Short), so it switches
-on by itself once the raised quota is in the env file. `BARRACE_QUIZ=on`
-or `off` in the env file forces it either way.
+`~/.config/barrace/env` and `systemctl --user restart n8n barrace-bot`; the
+extra units become extra quiz Shorts. `/status` in the bot shows today's use.
 
 ## Flag and capital quizzes
 
@@ -110,7 +120,7 @@ target/release/barrace render videos/x --format short
 
 `topics.plan.csv` (in git) is a full year: about 370 topics each for race,
 pillars and line charts, 53 per weekly theme, plus 365 quiz rows (`Guess the
-Flag: Europe #3` …; made by the quiz slot once the quota allows, see above). Setup copies it to `topics.csv`; after that `topics.csv` is the
+Flag: Europe #3` …; made after the graph Shorts while quota is left, see above). Setup copies it to `topics.csv`; after that `topics.csv` is the
 live queue (edit it freely).
 
 **Trend scout:** every Monday 08:00 the n8n workflow "barrace weekly trend
@@ -133,6 +143,14 @@ from the Telegram bot, independent of `topics.csv`:
    `topics_done.csv`; requests are logged in `requests_done.csv`.
 3. You get the same ✅/❌ message with Studio links. `/retry` resumes the last
    failed request (finished steps are skipped). `/status` says what is running.
+   `/topics` shows what the next 02:00 run will make (each slot's topic and the
+   quizzes the quota leaves room for) and how many topics are left per style,
+   per theme, and in nights.
+4. Every graph Short (nightly or requested) also arrives in the chat as a
+   video, right after its ✅ message, so you can watch it on the phone before
+   publishing. Quiz Shorts don't (there can be many a night): `/preview` lists
+   the 10 newest Shorts as buttons and sends the one you tap. Free, no YouTube
+   quota; Telegram's 50 MB bot limit is far above a Short (~7–12 MB).
 
 Only one video is made at a time. A request waits for a running video; the
 02:00 daily video waits (up to 4 h) for a running request instead of
