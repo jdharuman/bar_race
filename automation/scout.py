@@ -153,4 +153,6 @@ def decide(root: Path, data: str) -> str:
             it["status"] = "skipped"
             reply = f"Skipped: {it['title']}"
         path.write_text(json.dumps(st, indent=2))
+    if it["status"] == "added":
+        daily.commit_state(root, f"trend scout: added {it['title']}")
     return reply

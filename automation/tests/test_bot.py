@@ -40,7 +40,7 @@ class FakeChild:
 def make(tmp_path):
     tg, started = FakeTG(), []
 
-    def start(root, args, log_dir):
+    def start(root, args, log_dir, cmd="request"):
         started.append(args)
         return FakeChild()
     return bot.Bot(tg, OWNER, root=tmp_path, start=start, today=lambda: date(2026, 11, 22)), tg, started

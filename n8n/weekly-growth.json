@@ -1,0 +1,80 @@
+{
+  "id": "barraceWeeklyGrowth",
+  "name": "barrace weekly growth review",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 19 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "7e3a1b20-4c8d-4f62-8b3e-2a1f9d8c6b01",
+      "name": "Sundays 19:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "7e3a1b20-4c8d-4f62-8b3e-2a1f9d8c6b02",
+      "name": "Run now (manual)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "command": "cd \"$BARRACE_REPO\" && uv run --project automation automation/daily.py growth 2>&1"
+      },
+      "id": "7e3a1b20-4c8d-4f62-8b3e-2a1f9d8c6b03",
+      "name": "Review and adjust topics",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        320,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Sundays 19:00": {
+      "main": [
+        [
+          {
+            "node": "Review and adjust topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now (manual)": {
+      "main": [
+        [
+          {
+            "node": "Review and adjust topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "barraceErrNotify"
+  },
+  "active": false,
+  "pinData": {}
+}

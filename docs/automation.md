@@ -66,8 +66,12 @@ and upload only the 9:16 Short (the 16:9 main videos got no views). The graph
 research is unchanged, so `BARRACE_MAIN=on` in `~/.config/barrace/env` brings
 the main video and thumbnail back for every new video.
 
-Each night first makes one graph Short per slot, in this order: **race**,
-**pillars**, **lines** (`stocks` or `compare`). Each slot takes the
+Each night first makes one graph Short per slot: **race**, then **pillars**.
+The **lines** slot (`stocks` / `compare`) is off since 2026-11-26: its Shorts drew
+the fewest views (77–174, except famous names like Apple vs Nvidia), so its
+quota goes to quizzes. Make famous-brand comparisons on demand with `/new`, or
+set `BARRACE_SLOTS=race,pillars,lines` in the env file to bring the slot back.
+Each slot takes the
 first topic of its kind whose `theme` is today's theme, else the first one
 without a theme, else the first one of that kind. A slot with no topic is
 skipped (one Telegram note). The success message names the playlist
@@ -75,8 +79,8 @@ skipped (one Telegram note). The success message names the playlist
 trustworthy data, the slot tries its next topic once.
 
 Then **quiz Shorts fill the quota that is left**: one after another while the
-day still has 1,600 units, so 3 a night at 10,000 (3 graph Shorts + 3 quizzes =
-9,600) and 22 at 40,000. When `topics.csv` has no quiz row, the run appends the
+day still has 1,600 units, so 4 a night at 10,000 (2 graph Shorts + 4 quizzes =
+9,600) and 23 at 40,000. When `topics.csv` has no quiz row, the run appends the
 next generated title (`quiz.next_title`: the set whose countries have been
 used least, numbered after the highest number so far), so quizzes never run
 out. A failing quiz stops the quizzes for that night. `BARRACE_QUIZ=off` in
@@ -92,6 +96,36 @@ request in the evening (Berlin) leaves fewer quizzes for the night. When
 Google raises the quota, set `BARRACE_QUOTA=<new limit>` in
 `~/.config/barrace/env` and `systemctl --user restart n8n barrace-bot`; the
 extra units become extra quiz Shorts. `/status` in the bot shows today's use.
+
+**Channel stats (read-only).** `daily.py auth-stats` is a separate one-time
+login (`youtube_stats_token.json`, read-only scopes; the upload login stays
+upload-only). `daily.py stats --days 7 [--out file.json]` then prints channel
+totals, every upload's lifetime views and likes, and from YouTube Analytics
+(enable "YouTube Analytics API" in the Cloud project) per-video views, average
+% viewed and subscribers, views per day and traffic sources. Analytics lags
+1–2 days.
+
+**Weekly growth review (automatic).** Every Sunday 19:00 (n8n "barrace weekly
+growth review", `daily.py growth`) and on demand with `/grow [question]` in the
+bot: code pulls 28 days of stats (views, % viewed, countries, age/gender,
+subscribed vs not, traffic) and precomputes the tables; a Claude run
+(`.claude/skills/barrace-growth`) reads them plus current trends and writes a
+plan. Only three kinds of change are applied, each checked in code, and
+**applied right away**: ⬆️ promote existing topics (move to the top), ➕ add up
+to 5 new topics (checked like trend-scout ideas), ➖ drop up to 10 weak topics
+(kept in `videos/growth/dropped.csv`). Telegram gets the report, subscriber
+tips and the change list with **↩️ Undo** (removes the added topics and puts
+the dropped ones back). It never changes anything on YouTube. Each run's
+inputs, plan and log are in `videos/growth/<time>/`.
+
+**Topic history (auto-commit).** Every change to the topic lists is committed
+to a separate local git repo, `~/barrace-state` (`BARRACE_STATE` to move it):
+after each nightly run, Telegram request, growth review, its Undo, and each
+trend-scout ✅. It holds `topics.csv`, `topics_done.csv`, `requests_done.csv`
+and `dropped.csv`; the code repo never gets them (CLAUDE.md rule 2) and the
+state repo is never pushed. See what changed with `git -C ~/barrace-state log
+-p topics.csv`; restore a version with
+`git -C ~/barrace-state show <commit>:topics.csv > topics.csv`.
 
 ## Flag and capital quizzes
 
@@ -151,6 +185,7 @@ from the Telegram bot, independent of `topics.csv`:
    publishing. Quiz Shorts don't (there can be many a night): `/preview` lists
    the 10 newest Shorts as buttons and sends the one you tap. Free, no YouTube
    quota; Telegram's 50 MB bot limit is far above a Short (~7–12 MB).
+5. `/grow [question]` runs the growth review now (see below).
 
 Only one video is made at a time. A request waits for a running video; the
 02:00 daily video waits (up to 4 h) for a running request instead of

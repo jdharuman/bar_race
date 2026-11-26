@@ -180,11 +180,13 @@ set -a; . ~/.config/barrace/env; set +a
 n8n import:workflow --input=$REPO/n8n/error-alert.json   # fixed id barraceErrNotify
 n8n import:workflow --input=$REPO/n8n/daily-video.json
 n8n import:workflow --input=$REPO/n8n/weekly-scout.json   # fixed id barraceWeeklyScout
+n8n import:workflow --input=$REPO/n8n/weekly-growth.json  # fixed id barraceWeeklyGrowth
 ID=$(n8n list:workflow | grep "barrace daily video" | cut -d"|" -f1)
 n8n publish:workflow --id=$ID          # older 1.x: n8n update:workflow --id=$ID --active=true
 n8n publish:workflow --id=barraceErrNotify
 n8n publish:workflow --id=barraceWeeklyScout
-n8n list:workflow --active=true        # must list all three workflows
+n8n publish:workflow --id=barraceWeeklyGrowth
+n8n list:workflow --active=true        # must list all four workflows
 systemctl --user start n8n
 ```
 

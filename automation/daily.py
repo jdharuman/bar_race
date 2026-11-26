@@ -34,7 +34,13 @@ WEEK = ["sports", "india", "economy", "earth", "tech", "history", "people"]  # M
 # One video per graph slot per night, in this order; then quiz Shorts fill whatever
 # YouTube quota is left (see run_all). The quiz slot can repeat; the others run once.
 SLOTS = {"race": ("race",), "pillars": ("pillars",), "lines": LINE_STYLES, "quiz": ("quiz",)}
-GRAPH_SLOTS = ["race", "pillars", "lines"]
+GRAPH_SLOTS = ["race", "pillars"]  # lines (stocks/compare) Shorts drew the fewest views
+
+
+def graph_slots() -> list[str]:
+    """Nightly graph slots: BARRACE_SLOTS (e.g. "race,pillars,lines"), else GRAPH_SLOTS."""
+    env = [x.strip().lower() for x in os.environ.get("BARRACE_SLOTS", "").split(",") if x.strip()]
+    return [x for x in env if x in SLOTS and x != "quiz"] or list(GRAPH_SLOTS)
 QUIZ_MAX_PER_NIGHT = 40  # safety cap; the quota is the real limit
 
 
@@ -521,6 +527,45 @@ def send_telegram(text: str) -> None:
         print(f"telegram send failed: {e}", file=sys.stderr)
 
 
+STATE_FILES = ["topics.csv", "topics_done.csv", "requests_done.csv", "videos/growth/dropped.csv"]
+
+
+def state_repo() -> Path:
+    return Path(os.environ.get("BARRACE_STATE") or Path.home() / "barrace-state")
+
+
+def commit_state(root: Path, message: str) -> bool:
+    """Copy the topic lists into the local state repo (~/barrace-state, its own git
+    repo; never pushed, never the code repo) and commit when anything changed.
+    Returns True when a commit was made. Never raises."""
+    repo = state_repo()
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
+                              timeout=60)
+    try:
+        if not (repo / ".git").exists():
+            repo.mkdir(parents=True, exist_ok=True)
+            git("init", "-q")
+            git("config", "user.name", "barrace")
+            git("config", "user.email", "barrace@localhost")
+        for name in STATE_FILES:
+            src = root / name
+            if src.exists():
+                dest = repo / Path(name).name
+                shutil.copyfile(src, dest)
+                git("add", dest.name)
+        if git("diff", "--cached", "--quiet").returncode == 0:
+            return False
+        r = git("commit", "-q", "-m", message)
+        if r.returncode:
+            print(f"state commit failed: {r.stderr.strip()}", file=sys.stderr)
+        return r.returncode == 0
+    except Exception as e:  # history is a convenience; it must never fail a run
+        print(f"state commit failed: {e}", file=sys.stderr)
+        return False
+
+
 TG_VIDEO_MAX = 49 * 1024 * 1024  # bot API upload limit is 50 MB
 
 
@@ -598,7 +643,7 @@ def run_all(root: Path, today: date, steps=None, notify=send_telegram,
     codes, skipped = [], []
     fill_quiz = slots is None and quiz_on()
     if slots is None:
-        slots = GRAPH_SLOTS
+        slots = graph_slots()
     for slot in slots:
         code = run_slot(root, today, slot, steps, notify, sleep, wait_s)
         if code == 3:
@@ -633,7 +678,7 @@ def plan_night(topics: list[dict], done_titles: list[str], night: date, left: in
     import quiz
     rows, plan, theme = list(topics), [], theme_of(night)
     per_video = COST_VIDEO * 2 + COST_THUMB if main_on() else COST_VIDEO
-    for slot in GRAPH_SLOTS:
+    for slot in graph_slots():
         i = choose(rows, SLOTS[slot], theme)
         plan.append((slot, None if i is None else rows.pop(i)))
         if i is not None:
@@ -920,6 +965,12 @@ def main(argv=None) -> int:
     sub.add_parser("pick")
     sub.add_parser("run", help="all steps for the first topic, then notify (what n8n calls)")
     sub.add_parser("auth")
+    sub.add_parser("auth-stats", help="one-time read-only login for channel stats")
+    gr = sub.add_parser("growth", help="weekly growth review: stats -> analysis -> topics.csv")
+    gr.add_argument("--question", default="")
+    st = sub.add_parser("stats", help="channel performance (read-only) as JSON")
+    st.add_argument("--days", type=int, default=7)
+    st.add_argument("--out", type=Path)
     sub.add_parser("scout", help="weekly trend scout: propose timely topics in Telegram")
     rq = sub.add_parser("request", help="one-off video from the Telegram bot; never touches topics.csv")
     rq.add_argument("--style", choices=STYLES)
@@ -942,6 +993,7 @@ def main(argv=None) -> int:
         return code
     if a.cmd == "run":
         code = run_all(root, date.today())
+        commit_state(root, f"nightly run {date.today()} (exit {code})")
         return 0 if code in (3, 4) else code  # empty list / already running are not failures
     if a.cmd == "research":
         d = a.dir.resolve()
@@ -955,10 +1007,13 @@ def main(argv=None) -> int:
     if a.cmd == "request":
         try:
             if a.resume:
-                return run_request(root, date.today(), resume=a.resume.resolve())
-            return run_request(root, date.today(), row={
-                "style": a.style or "", "title": a.title, "youtube_url": a.url,
-                "comment": a.comment, "look": a.look})
+                code = run_request(root, date.today(), resume=a.resume.resolve())
+            else:
+                code = run_request(root, date.today(), row={
+                    "style": a.style or "", "title": a.title, "youtube_url": a.url,
+                    "comment": a.comment, "look": a.look})
+            commit_state(root, f"Telegram request: {a.title or a.url or a.resume} (exit {code})")
+            return code
         except Exception as e:  # steps report themselves; this catches everything else
             send_telegram(f"❌ Telegram request crashed: {type(e).__name__}: {e}")
             return 70
@@ -969,6 +1024,20 @@ def main(argv=None) -> int:
         import youtube
         youtube.auth()
         return 0
+    if a.cmd == "auth-stats":
+        import stats
+        stats.auth_stats()
+        return 0
+    if a.cmd == "growth":
+        import growth
+        try:
+            return growth.run_growth(root, date.today(), a.question)
+        except Exception as e:
+            send_telegram(f"❌ Growth review crashed: {type(e).__name__}: {e}")
+            return 70
+    if a.cmd == "stats":
+        import stats
+        return stats.main(root, a.days, a.out)
     if a.cmd == "finish":
         _print(finish(root, a.dir.resolve(), a.status))
         return 0

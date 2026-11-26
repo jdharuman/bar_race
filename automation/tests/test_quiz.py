@@ -257,3 +257,16 @@ def test_telegram_upload_body_carries_fields_and_the_file(tmp_path):
     assert b'name="chat_id"\r\n\r\n5\r\n' in body
     assert b'name="video"; filename="short.mp4"' in body and b"\x00VIDEO\x01" in body
     assert body.endswith(f"--{boundary}--\r\n".encode())
+
+
+def test_default_nightly_slots_skip_lines_so_quizzes_get_its_quota(monkeypatch):
+    monkeypatch.delenv("BARRACE_SLOTS")
+    monkeypatch.delenv("BARRACE_MAIN")
+    monkeypatch.setenv("BARRACE_QUIZ", "on")
+    topics = [{"style": s, "title": t, "theme": ""} for s, t in
+              (("race", "R"), ("pillars", "P"), ("compare", "A vs B"), ("quiz", "Guess the Flag: Asia #1"))]
+    from datetime import date
+    plan = daily.plan_night(topics, [], date(2026, 11, 27), 10000)
+    assert [slot for slot, _ in plan] == ["race", "pillars", "quiz", "quiz", "quiz", "quiz"]
+    monkeypatch.setenv("BARRACE_SLOTS", "race, lines, bogus")
+    assert daily.graph_slots() == ["race", "lines"]

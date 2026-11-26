@@ -41,11 +41,14 @@ HELP = ("barrace bot\n"
         "/status – is a video being made right now?\n"
         "/topics – what the next run makes, and how many topics are left\n"
         "/preview – watch a recent Short here (graph Shorts arrive by themselves)\n"
+        "/grow [question] – growth review now: stats, trends, audience → topics.csv adjusted "
+        "(also every Sunday)\n"
         "/retry – retry the last failed request (finished steps are kept)\n"
         "/cancel – stop filling in /new\n"        "Mondays: trend ideas arrive here; ✅ adds one to the top of topics.csv.\n"
         "The daily 02:00 video from topics.csv keeps running as usual.")
 COMMANDS = [("new", "Make a one-off video"), ("status", "Is a video being made?"),
             ("topics", "Next run and topics left"), ("preview", "Watch a recent Short here"),
+            ("grow", "Growth review: analyse and adjust topics"),
             ("retry", "Retry the last failed request"), ("cancel", "Stop filling in /new"),
             ("help", "What this bot does")]
 
@@ -83,12 +86,12 @@ def summary(r: dict) -> str:
             f"YouTube hint: {r['youtube_url'] or '–'}\nNotes: {r['comment'] or '–'}")
 
 
-def launch(root: Path, args: list[str], log_dir: Path) -> subprocess.Popen:
-    """Start `daily.py request ...` detached, so a bot restart doesn't kill the video."""
+def launch(root: Path, args: list[str], log_dir: Path, cmd: str = "request") -> subprocess.Popen:
+    """Start `daily.py <cmd> ...` detached, so a bot restart doesn't kill it."""
     log_dir.mkdir(parents=True, exist_ok=True)
     log = (log_dir / f"{datetime.now():%Y-%m-%dT%H-%M-%S}.log").open("w")
     return subprocess.Popen([sys.executable, str(root / "automation" / "daily.py"),
-                             "--root", str(root), "request", *args],
+                             "--root", str(root), cmd, *args],
                             cwd=root, stdin=subprocess.DEVNULL, stdout=log,
                             stderr=subprocess.STDOUT, start_new_session=True)
 
@@ -123,14 +126,15 @@ class Bot:
             return  # not the owner: ignore silently
         text = (msg.get("text") or "").strip()
         if text.startswith("/"):
-            self.on_command(chat, text.split()[0].split("@")[0].lower())
+            self.on_command(chat, text.split()[0].split("@")[0].lower(),
+                            text.partition(" ")[2].strip())
         elif chat in self.forms:
             self.on_text(chat, text)
         else:
             self.say(chat, HELP)
 
     # -- commands --
-    def on_command(self, chat: int, cmd: str) -> None:
+    def on_command(self, chat: int, cmd: str, arg: str = "") -> None:
         if cmd == "/new":
             self.forms[chat] = {"step": "style", "row": {c: "" for c in daily.TOPIC_COLS}}
             self.say(chat, "New one-off video (not added to topics.csv).\nWhich style?",
@@ -143,6 +147,8 @@ class Bot:
             self.say(chat, self.topics())
         elif cmd == "/preview":
             self.preview_menu(chat)
+        elif cmd == "/grow":
+            self.grow(chat, arg)
         elif cmd == "/retry":
             d = daily.last_failed_request(self.root)
             if d is None:
@@ -213,12 +219,21 @@ class Bot:
             lines.append("Graph topics by theme: "
                          + " · ".join(f"{k} {v}" for k, v in sorted(themes.items())))
         n_line = counts.get("stocks", 0) + counts.get("compare", 0)
-        last = [f"race {counts.get('race', 0)}", f"pillars {counts.get('pillars', 0)}",
-                f"lines {n_line}"]
+        per_slot = {"race": counts.get("race", 0), "pillars": counts.get("pillars", 0),
+                    "lines": n_line}
+        last = [f"{s} {per_slot[s]}" for s in daily.graph_slots()]
         if len(quizzes):
             last.append(f"quiz {counts.get('quiz', 0) // len(quizzes)} (then auto titles)")
         lines.append("Nights each slot lasts: " + " · ".join(last))
         return "\n".join(lines)
+
+    def grow(self, chat: int, question: str) -> None:
+        question = question[:MAX_COMMENT]  # data for the analysis, never instructions
+        child = self.start(self.root, [f"--question={question}"], self.root / "videos" / "growth",
+                           cmd="growth")
+        self.children.append(child)
+        self.say(chat, "📈 Growth review started: channel stats, trends and audience. "
+                       "Takes about 5–15 min; the report and topics.csv changes arrive here.")
 
     def recent_shorts(self, n: int = PREVIEW_N) -> list[Path]:
         shorts = [p for p in (self.root / "videos").glob("*/out/short.mp4")]
@@ -251,6 +266,10 @@ class Bot:
 
     # -- form --
     def on_button(self, chat: int, data: str) -> None:
+        if data.startswith("growth:"):
+            import growth
+            self.say(chat, growth.undo(self.root, data))
+            return
         if data.startswith("pv:"):
             self.send_preview(chat, data)
             return
