@@ -146,4 +146,4 @@ def test_runs_today_counts_both_logs(tmp_path):
     daily.run_request(tmp_path, date.today(), row=row(), steps=STEPS, notify=[].append)
     daily.write_rows(tmp_path / "topics.csv", daily.TOPIC_COLS, [row(title="GDP")])
     daily.run_all(tmp_path, date.today(), steps=STEPS, notify=[].append)
-    assert daily.runs_today(tmp_path, date.today()) == 2
+    assert daily.runs_today(tmp_path, date.today()) == {"uploaded": 2}

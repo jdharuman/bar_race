@@ -164,8 +164,14 @@ class Bot:
                 f"({'Telegram request' if h.get('kind') == 'request' else 'daily video'}, "
                 f"since {h.get('since', '?')[11:16]})") if h else "Idle: no video being made."
         n = daily.runs_today(self.root, self.today())
+        made = n.get("uploaded", 0)
+        parts = [f"{made} Short{'' if made == 1 else 's'} uploaded"]
+        if n.get("waiting"):
+            parts.append(f"{n['waiting']} waiting for quota")
+        if n.get("failed"):
+            parts.append(f"{n['failed']} topic{'' if n['failed'] == 1 else 's'} failed (no video)")
         q = daily.Quota(self.root)
-        return (f"{busy}\nFinished today: {n}\n"
+        return (f"{busy}\nToday: {', '.join(parts)}\n"
                 f"YouTube quota today: {q.used:,} of {q.limit:,} units used "
                 f"(a Short needs {daily.COST_VIDEO:,}).")
 
@@ -373,9 +379,10 @@ class Bot:
         h = daily.lock_holder(self.root)
         wait = (f"\nAnother video is being made ({h.get('title') or '?'}); yours starts "
                 "automatically when it finishes.") if h else ""
-        n = daily.runs_today(self.root, self.today())
-        quota = ("\n⚠️ Already 2+ videos today: YouTube's daily upload quota "
-                 "(about 3) may run out." if n >= 2 else "")
+        q = daily.Quota(self.root)
+        quota = (f"\n⚠️ Today's YouTube quota is used up ({q.left():,} units left); the upload "
+                 "waits until it resets (09:00 Berlin)." if q.left() < daily.COST_VIDEO else
+                  f"\nQuota: {q.left():,} units left today; this request uses {daily.COST_VIDEO:,}.")
         child = self.start(self.root, args, self.root / "videos" / ".requests")
         self.children.append(child)
         self.say(chat, f"{what}{wait}{quota}\nIt takes about 10–60 min. You'll get the "

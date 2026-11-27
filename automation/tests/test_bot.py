@@ -289,3 +289,13 @@ def test_preview_with_nothing_made_or_an_old_button(tmp_path):
     b.handle(msg("/preview"))
     b.handle(tap("pv:3"))
     assert tg.texts() == ["No Short made yet.", "That list has expired. Send /preview again."]
+
+
+def test_status_counts_shorts_made_not_failed_topics(tmp_path):
+    b, tg, _ = make(tmp_path)
+    b.today = lambda: date(2026, 11, 27)
+    done = [{"style": "race", "title": f"T{i}", "finished_at": "2026-11-27T02:0{i}:00",
+             "status": "failed" if i < 2 else "uploaded"} for i in range(8)]
+    daily.write_rows(tmp_path / "topics_done.csv", daily.DONE_COLS, done)
+    b.handle(msg("/status"))
+    assert "Today: 6 Shorts uploaded, 2 topics failed (no video)" in tg.texts()[-1]

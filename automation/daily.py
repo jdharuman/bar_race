@@ -942,15 +942,19 @@ def run_request(root: Path, today: date, row: dict | None = None, resume: Path |
                      lambda status: finish_request(root, d, status))
 
 
-def runs_today(root: Path, today: date) -> int:
-    """Daily + request runs finished today (YouTube allows about 3 uploads of a pair a day)."""
-    n = 0
+def runs_today(root: Path, today: date) -> dict[str, int]:
+    """Daily + request topics finished today, counted by status (uploaded, failed,
+    waiting). A failed topic made no video, so it is not a Short."""
+    n: dict[str, int] = {}
     for name in ("topics_done.csv", REQUESTS_DONE):
         try:
             rows = read_rows(root / name)
         except BadFile:
             continue
-        n += sum(1 for r in rows if r.get("finished_at", "").startswith(today.isoformat()))
+        for r in rows:
+            if r.get("finished_at", "").startswith(today.isoformat()):
+                st = r.get("status") or "?"
+                n[st] = n.get(st, 0) + 1
     return n
 
 
