@@ -175,9 +175,9 @@ def test_request_held_for_quota_is_not_a_failure(tmp_path):
     assert daily.last_failed_request(tmp_path) is None
 
 
-def test_unsourceable_topic_makes_way_for_the_next_one_once(tmp_path):
+def test_unsourceable_topic_makes_way_for_the_next_one_twice(tmp_path):
     topics(tmp_path, [row("race", "R1", "sports"), row("race", "R2", "sports"),
-                      row("race", "R3", "sports")])
+                      row("race", "R3", "sports"), row("race", "R4", "sports")])
 
     def no_data(root, d):  # research gave up on every topic
         (d / daily.NO_DATA).touch()
@@ -188,9 +188,10 @@ def test_unsourceable_topic_makes_way_for_the_next_one_once(tmp_path):
                          notify=sent.append, slots=["race"])
     assert code == 1
     done = daily.read_rows(tmp_path / "topics_done.csv")
-    assert [(r["title"], r["status"]) for r in done] == [("R1", "failed"), ("R2", "failed")]
-    assert [r["title"] for r in daily.read_rows(tmp_path / "topics.csv")] == ["R3"]
-    assert sum("trying the next race topic" in m for m in sent) == 1
+    assert [(r["title"], r["status"]) for r in done] == [("R1", "failed"), ("R2", "failed"),
+                                                         ("R3", "failed")]
+    assert [r["title"] for r in daily.read_rows(tmp_path / "topics.csv")] == ["R4"]
+    assert sum("trying the next race topic" in m for m in sent) == 2
 
 
 def test_other_failures_do_not_try_another_topic(tmp_path):

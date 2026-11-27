@@ -730,7 +730,7 @@ def reject_bad_rows(root: Path, notify) -> None:
             notify(f"❌ barrace skipped a bad topics.csv row ({row['title'] or row['youtube_url']}): {problem}")
 
 
-SLOT_TRIES = 2  # a topic that can't be sourced makes way for the slot's next topic once
+SLOT_TRIES = 3  # a slot whose topic has no trustworthy data tries up to 2 more topics
 
 
 def run_slot(root: Path, today: date, slot: str, steps, notify, sleep, wait_s: int) -> int:
