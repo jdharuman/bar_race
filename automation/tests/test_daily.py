@@ -451,3 +451,33 @@ def test_mixed_case_look_row_still_leaves_topics(tmp_path):
     d = Path(daily.pick(tmp_path, TODAY)["dir"])
     daily.finish(tmp_path, d, "failed")
     assert [r["title"] for r in daily.read_rows(tmp_path / "topics.csv")] == ["Next"]
+
+
+def test_request_notes_are_not_a_redo(tmp_path):
+    d = redo_dir(tmp_path)
+    (d / "topic.json").write_text(json.dumps({"row": row(comment="use UN Tourism data"),
+                                              "redo_of": None, "request": True}))
+    daily.research(tmp_path, d, run=FakeRun([(0, "{}"), (0, "ok")]), sleep=lambda s: None)
+
+
+def test_pinned_row_is_not_picked_as_a_redo(tmp_path):
+    write_topics(tmp_path, [row(comment="pin: Europe test")])
+    p = daily.pick(tmp_path, TODAY)
+    topic = json.loads((Path(p["dir"]) / "topic.json").read_text())
+    assert topic["row"]["comment"] == "" and topic["redo_of"] is None
+
+
+def test_give_up_message_shows_rephrase_suggestions(tmp_path):
+    d = tmp_path / "v"
+    d.mkdir()
+
+    def notes(cmd):
+        if cmd[0].endswith("claude"):
+            (d / "research_notes.md").write_text(
+                "# x\n\n## Why\nno data\n\n## How to rephrase\n\n- pillars: Forbes' #1 Person\n")
+    try:
+        daily.research(tmp_path, d, run=FakeRun([(0, json.dumps({"result": "stopped"}))], notes),
+                       sleep=lambda s: None)
+        assert False, "expected StepError"
+    except daily.StepError as e:
+        assert "💡 Try instead:\n- pillars: Forbes' #1 Person" in str(e)

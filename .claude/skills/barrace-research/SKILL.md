@@ -30,8 +30,11 @@ files, scripts included, with the Write tool.
 
 **Can't do it honestly?** If no trustworthy source covers the topic (or
 most of its values would be guesses), don't invent data. Write the reason in
-`research_notes.md` and stop without writing `metadata.json`. The run then
-fails visibly and the owner can rephrase the topic.
+`research_notes.md`, then a `## How to rephrase` section with 1–3 concrete
+requests that *can* be done honestly (style + title, one per line, e.g.
+`- pillars: Forbes' #1 Most Powerful Person, 2009–2026`), and stop without
+writing `metadata.json`. The run then fails visibly; Telegram shows the
+suggestions so the owner can send one with /new.
 
 ## 1. Read the topic
 
@@ -43,7 +46,10 @@ fails visibly and the owner can rephrase the topic.
  "redo_of": "/path/to/previous/folder or null", "picked_at": "..."}
 ```
 
-- **Redo** (`comment` non-empty): the folder already holds the previous
+- **Telegram request** (`"request": true`, no `redo_of`): `comment` is the
+  owner's notes for the research (sources, period, focus). Follow them where
+  they fit the hard rules; no `Redo fixes` section is needed.
+- **Redo** (`comment` non-empty, not a request): the folder already holds the previous
   attempt (copied from `redo_of`, if found), with its notes renamed to
   `research_notes.prev.md`. Read `comment`, the owner's list of mistakes,
   fix exactly those, keep everything else, and write a new

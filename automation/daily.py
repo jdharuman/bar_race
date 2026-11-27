@@ -264,6 +264,8 @@ def pick(root: Path, today: date, styles=None, theme: str | None = None) -> dict
     if problem := row_problem(row):
         move_to_done(root, row, status="failed", error=f"pick: {problem}")
         raise Invalid(problem)
+    if pinned(row):  # "pin: ..." only schedules the row; it is not a redo request
+        row["comment"] = ""
     done = read_rows(root / "topics_done.csv")
     if not row["comment"]:
         # retry of a failed run: continue in its folder; finished steps are skipped
@@ -317,6 +319,20 @@ def claude_cmd(d: Path, root: Path) -> list[str]:
     return [os.environ.get("CLAUDE_BIN", "claude"), "-p", prompt, "--model", "sonnet", "--setting-sources", "project",
             "--allowedTools", *tools, "--disallowedTools", *denied,
             "--output-format", "json"]
+
+
+def _rephrase(notes: Path, limit: int = 600) -> str:
+    """The "How to rephrase" section of research_notes.md (written when research gives
+    up), so Telegram shows what to ask for instead."""
+    try:
+        text = notes.read_text()
+    except OSError:
+        return ""
+    m = re.search(r"^#+[^\n]*rephras[^\n]*\n(.*?)(?=^#|\Z)", text, re.I | re.M | re.S)
+    if not m:
+        return ""
+    body = m.group(1).strip()
+    return body if len(body) <= limit else body[:limit].rsplit("\n", 1)[0] + "\n…"
 
 
 def _claude_result(stdout: str, limit: int = 700) -> str:
@@ -399,13 +415,15 @@ def research(root: Path, d: Path, run=subprocess.run, sleep=time.sleep) -> None:
                         + ", ".join(changed[:10]) + " (check with git diff before running again)")
     if not (d / "metadata.json").exists():
         (d / NO_DATA).touch()
+        tips = _rephrase(d / "research_notes.md")
         raise StepError("research gave up, no video made (no trustworthy data found). "
-                        f"Claude said:\n{_claude_result(r.stdout)}\n"
-                        "Full reasons: research_notes.md in the video folder.")
+                        f"Claude said:\n{_claude_result(r.stdout, 450 if tips else 700)}\n"
+                        + (f"\n💡 Try instead:\n{tips}\n" if tips else "")
+                        + "Full reasons: research_notes.md in the video folder.")
     topic = json.loads((d / "topic.json").read_text()) if (d / "topic.json").exists() else {}
     notes = d / "research_notes.md"
-    if topic.get("row", {}).get("comment") and (
-            not notes.exists() or "redo fixes" not in notes.read_text().lower()):
+    redo = topic.get("row", {}).get("comment") and (topic.get("redo_of") or not topic.get("request"))
+    if redo and (not notes.exists() or "redo fixes" not in notes.read_text().lower()):
         raise StepError("redo: research_notes.md has no 'Redo fixes' section, "
                         "so the comment was not worked on")
     if not ((d / "data.csv").exists() or (d / "pillars.csv").exists()):
@@ -904,9 +922,10 @@ def finish_request(root: Path, d: Path, status: str) -> dict:
                  "main_video_id": up.get("main", ""), "short_video_id": up.get("short", "")})
     write_rows(root / REQUESTS_DONE, DONE_COLS, done)
     release_lock(root)
-    return report(row, up, status, err,
-                  "To retry without redoing finished steps, send /retry to the bot.",
-                  tag=" (Telegram request)")
+    hint = ("/retry won't help here: there is no real data for this topic. "
+            "Send /new with one of the suggestions." if (d / NO_DATA).exists() else
+            "To retry without redoing finished steps, send /retry to the bot.")
+    return report(row, up, status, err, hint, tag=" (Telegram request)")
 
 
 def last_failed_request(root: Path) -> Path | None:

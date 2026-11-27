@@ -299,3 +299,18 @@ def test_status_counts_shorts_made_not_failed_topics(tmp_path):
     daily.write_rows(tmp_path / "topics_done.csv", daily.DONE_COLS, done)
     b.handle(msg("/status"))
     assert "Today: 6 Shorts uploaded, 2 topics failed (no video)" in tg.texts()[-1]
+
+
+def test_retry_refuses_a_request_without_real_data(tmp_path):
+    import daily
+    d = tmp_path / "videos" / "2026-11-27-req-most-powerful-person"
+    d.mkdir(parents=True)
+    (d / "topic.json").write_text("{}")
+    (d / daily.NO_DATA).touch()
+    (d / "research_notes.md").write_text("# Notes\n\n## How to rephrase\n\n- pillars: Forbes #1\n")
+    daily.write_rows(tmp_path / daily.REQUESTS_DONE, daily.DONE_COLS,
+                     [{"title": "x", "status": "failed", "folder": str(d)}])
+    tg, started = FakeTG(), []
+    b = bot.Bot(tg, OWNER, root=tmp_path, start=lambda *a, **k: started.append(a))
+    b.on_command(OWNER, "/retry")
+    assert started == [] and "pillars: Forbes #1" in tg.texts()[-1]

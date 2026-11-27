@@ -154,6 +154,12 @@ class Bot:
             if d is None:
                 self.say(chat, "No failed request to retry.")
                 return
+            if (d / daily.NO_DATA).exists():  # the same topic would give up again
+                tips = daily._rephrase(d / "research_notes.md")
+                self.say(chat, f"Retrying won't help: there is no real data for "
+                               f"\"{d.name[15:]}\"." + (f"\n💡 Try instead (/new):\n{tips}" if tips
+                                                         else " Rephrase it with /new."))
+                return
             self.run(chat, [f"--resume={d}"], f"Retrying: {d.name}")
         else:
             self.say(chat, HELP)
@@ -202,7 +208,7 @@ class Bot:
                 extra = ", ".join(x for x in (r.get("style", "").lower(), r.get("theme", ""),
                                               r.get("look", "")) if x)
                 lines.append(f"• {slot}: {r.get('title') or r.get('youtube_url')} ({extra})"
-                             + (" – redo" if r.get("comment") else ""))
+                             + (" – redo" if r.get("comment") and not daily.pinned(r) else ""))
         quizzes = [r for slot, r in plan if slot == "quiz"]
         if quizzes:
             lines.append(f"• quiz ×{len(quizzes)}:")
@@ -297,7 +303,8 @@ class Bot:
             form["step"] = "title"
             if r["style"] == "stocks":
                 self.say(chat, "Which companies? 2 or 3, e.g. Apple vs Microsoft vs Nvidia\n"
-                               "(shows what $1,000 invested in each would be worth, since all were listed)")
+                               "(shows what $1,000 invested in each would be worth, since all were listed; "
+                               "€1,000 when all trade in euros, ₹1 lakh for Indian stocks)")
             elif r["style"] == "compare":
                 self.say(chat, "What to compare over time? 2–3 things and the measure, e.g.\n"
                                "Messi vs Ronaldo career goals, or Tamil Nadu vs Karnataka GDP")
