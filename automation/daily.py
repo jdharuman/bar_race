@@ -231,12 +231,20 @@ class Invalid(Exception):
     pass
 
 
+def pinned(row: dict) -> bool:
+    """A row whose comment starts with "pin:" (e.g. a test week) runs before other rows
+    of its theme, whatever growth reviews or the scout move to the top of the file."""
+    return row.get("comment", "").strip().lower().startswith("pin:")
+
+
 def choose(topics: list[dict], styles=None, theme: str | None = None) -> int | None:
     """Index of the topic to make: among `styles` (None = any), first today's theme,
-    then a row without theme, then any. None = no topic of these styles."""
+    then a row without theme, then any; pinned rows (see `pinned`) before the rest
+    each time. None = no topic of these styles."""
     cands = [i for i, r in enumerate(topics) if styles is None or r.get("style", "").lower() in styles]
     if not cands:
         return None
+    cands.sort(key=lambda i: not pinned(topics[i]))  # stable: file order otherwise
     if theme:
         for want in (theme, ""):
             for i in cands:
@@ -684,8 +692,8 @@ def plan_night(topics: list[dict], done_titles: list[str], night: date, left: in
         if i is not None:
             left -= per_video
     if quiz_on():
-        quiz_titles = [r.get("title", "") for r in topics if r.get("style", "").lower() == "quiz"]
-        quiz_titles += done_titles
+        quiz_titles = list(done_titles)  # oldest first, like top_up_quiz
+        quiz_titles += [r.get("title", "") for r in topics if r.get("style", "").lower() == "quiz"]
         n = 0
         while left >= COST_VIDEO and n < QUIZ_MAX_PER_NIGHT:
             i = choose(rows, ("quiz",), theme)
@@ -715,7 +723,7 @@ def top_up_quiz(root: Path) -> None:
         done = read_rows(root / "topics_done.csv")
     except BadFile:
         done = []
-    title = quiz.next_title([r.get("title", "") for r in topics + done
+    title = quiz.next_title([r.get("title", "") for r in done + topics  # oldest first
                              if r.get("style", "").lower() == "quiz"])
     topics.append({"style": "quiz", "title": title})
     write_rows(root / "topics.csv", TOPIC_COLS, topics)
@@ -962,6 +970,15 @@ def _print(obj) -> None:
     print(json.dumps(obj))
 
 
+def views_check(root: Path) -> None:
+    """2-day views report (automation/views.py); never fails the run."""
+    import views
+    try:
+        views.check(root, date.today())
+    except BaseException as e:  # SystemExit when the stats login is missing
+        print(f"views check failed: {e}", file=sys.stderr)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", type=Path, default=ROOT)
@@ -975,6 +992,7 @@ def main(argv=None) -> int:
     st = sub.add_parser("stats", help="channel performance (read-only) as JSON")
     st.add_argument("--days", type=int, default=7)
     st.add_argument("--out", type=Path)
+    sub.add_parser("views", help="Telegram: views of the Shorts uploaded two nights ago")
     sub.add_parser("scout", help="weekly trend scout: propose timely topics in Telegram")
     rq = sub.add_parser("request", help="one-off video from the Telegram bot; never touches topics.csv")
     rq.add_argument("--style", choices=STYLES)
@@ -998,6 +1016,7 @@ def main(argv=None) -> int:
     if a.cmd == "run":
         code = run_all(root, date.today())
         commit_state(root, f"nightly run {date.today()} (exit {code})")
+        views_check(root)
         return 0 if code in (3, 4) else code  # empty list / already running are not failures
     if a.cmd == "research":
         d = a.dir.resolve()
@@ -1039,6 +1058,9 @@ def main(argv=None) -> int:
         except Exception as e:
             send_telegram(f"❌ Growth review crashed: {type(e).__name__}: {e}")
             return 70
+    if a.cmd == "views":
+        views_check(root)
+        return 0
     if a.cmd == "stats":
         import stats
         return stats.main(root, a.days, a.out)

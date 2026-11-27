@@ -202,3 +202,12 @@ def test_other_failures_do_not_try_another_topic(tmp_path):
     assert daily.run_all(tmp_path, MON, steps=[("research", ok), ("render", broken)],
                          notify=lambda m: None, slots=["race"]) == 1
     assert [r["title"] for r in daily.read_rows(tmp_path / "topics.csv")] == ["R2"]
+
+
+def test_pinned_rows_run_first_within_their_theme():
+    rows = [{"style": "race", "title": "A", "theme": "sports", "comment": ""},
+            {"style": "race", "title": "B", "theme": "sports", "comment": "pin: test week"},
+            {"style": "race", "title": "C", "theme": "", "comment": "pin: other"}]
+    assert daily.choose(rows, ("race",), "sports") == 1
+    assert daily.choose(rows, ("race",), "earth") == 2  # no earth row: unthemed, pinned first
+    assert daily.choose([rows[0]], ("race",), "sports") == 0

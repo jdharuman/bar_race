@@ -112,3 +112,10 @@ def test_topic_changes_are_committed_to_the_state_repo(tmp_path, monkeypatch):
     assert log == ["growth review 2026-11-29T19-00-00: +2 added, 1 promoted, -0 dropped", "first"]
     assert "Most Valuable Football Clubs" in (state / "topics.csv").read_text()
     assert (state / "dropped.csv").exists() is False  # nothing dropped: no file yet
+
+
+def test_growth_never_drops_a_pinned_topic():
+    topics = [{"style": "race", "title": "Kept", "comment": "pin: Europe test"},
+              {"style": "race", "title": "Gone", "comment": ""}]
+    plan = growth.check({"drop": [{"title": "Kept"}, {"title": "Gone"}]}, topics, set())
+    assert [d["title"] for d in plan["drop"]] == ["Gone"]

@@ -81,9 +81,11 @@ trustworthy data, the slot tries up to two more topics.
 Then **quiz Shorts fill the quota that is left**: one after another while the
 day still has 1,600 units, so 4 a night at 10,000 (2 graph Shorts + 4 quizzes =
 9,600) and 23 at 40,000. When `topics.csv` has no quiz row, the run appends the
-next generated title (`quiz.next_title`: the set whose countries have been
-used least, numbered after the highest number so far), so quizzes never run
-out. A failing quiz stops the quizzes for that night. `BARRACE_QUIZ=off` in
+next generated title (`quiz.next_title`: about 3 flag quizzes per capital
+quiz, never the same set as one of the last 4, then the set whose countries
+have been used least, numbered after the highest number so far), so quizzes
+never run out. Capital quizzes for Africa and Indian States drew single-digit
+views and are no longer generated (they still work as a request). A failing quiz stops the quizzes for that night. `BARRACE_QUIZ=off` in
 the env file turns them off.
 
 YouTube gives the API project **10,000 units a day** (reset at midnight
@@ -104,6 +106,30 @@ totals, every upload's lifetime views and likes, and from YouTube Analytics
 (enable "YouTube Analytics API" in the Cloud project) per-video views, average
 % viewed and subscribers, views per day and traffic sources. Analytics lags
 1–2 days.
+
+**Translated titles.** Every Short is uploaded with its title in German,
+French, Italian, Spanish, Dutch and Polish as well (YouTube shows each viewer
+the one for their language; the description stays English). Quiz titles are
+translated in code (`quiz.LOCAL_TITLE`); for graph Shorts the research agent
+writes them into `metadata.json` (`short.localizations`). If YouTube ever
+rejects the translations, the upload is retried without them.
+
+**Europe test (28 Nov – 4 Dec 2026).** Europe gives about 46% of views
+(Germany first), and Europeans watch charts on money, cars, F1, football and
+record buildings, while flag quizzes reach Asia. For one week European topics,
+matched to each night's theme, are pinned (their `comment` starts with
+`pin:`: a pinned row runs before every other row of its theme, so growth
+reviews and scout ideas can't push it back, and growth reviews never drop it), and the stock/compare
+slot is on (`BARRACE_SLOTS=race,pillars,lines` in the env file, so 3 quizzes
+instead of 4). European stock Shorts are in euros ("€1,000 in …"). After
+4 Dec: compare the 2-day views reports, then remove that `BARRACE_SLOTS` line
+(or keep it) and restart n8n and the bot.
+
+**Views after 2 days (automatic).** At the end of each nightly run, Telegram
+gets the view counts of the Shorts uploaded two nights earlier, the batch
+total, and the totals of up to 7 earlier batches at the same age (kept in
+`videos/growth/views.csv`), and says which are still private. It uses the
+read-only stats login and 3 API units; `daily.py views` runs it by hand.
 
 **Weekly growth review (automatic).** Every Sunday 19:00 (n8n "barrace weekly
 growth review", `daily.py growth`) and on demand with `/grow [question]` in the

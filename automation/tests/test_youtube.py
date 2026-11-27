@@ -68,3 +68,19 @@ def test_upload_never_public(tmp_path):
     youtube.upload_all(video_dir(tmp_path), yt)
     assert len(yt.inserted) == 2
     assert all(b["status"]["privacyStatus"] == "private" for _, b in yt.inserted)
+
+
+def test_localized_titles_are_cleaned_and_get_shorts_tag():
+    meta = {"title": "Biggest Economies", "description": "English desc", "tags": [],
+            "localizations": {"de": {"title": "Größte Volkswirtschaften"}, "xx": {"title": "?"},
+                              "fr": {"title": ""}, "it": "bad"}}
+    b = youtube.build_body(meta, short=True)
+    assert b["snippet"]["defaultLanguage"] == "en"
+    assert b["localizations"] == {"de": {"title": "Größte Volkswirtschaften #Shorts",
+                                         "description": "English desc\n\n#Shorts"}}
+    assert b["status"]["privacyStatus"] == "private"
+
+
+def test_no_localizations_no_language_fields():
+    b = youtube.build_body({"title": "t", "description": "", "tags": []}, short=True)
+    assert "localizations" not in b and "defaultLanguage" not in b["snippet"]

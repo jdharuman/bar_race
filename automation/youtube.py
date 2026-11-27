@@ -23,9 +23,34 @@ def build_body(meta: dict, short: bool) -> dict:
             break
         tags.append(t)
         used += len(t) + 1
-    return {"snippet": {"title": title[:100], "description": desc[:5000], "tags": tags,
+    body = {"snippet": {"title": title[:100], "description": desc[:5000], "tags": tags,
                         "categoryId": "27"},
             "status": {"privacyStatus": "private", "selfDeclaredMadeForKids": False}}
+    loc = localizations(meta.get("localizations"), desc, short)
+    if loc:  # viewers whose YouTube language is one of these see the translated title
+        body["snippet"]["defaultLanguage"] = "en"
+        body["localizations"] = loc
+    return body
+
+
+LANGS = ("de", "fr", "it", "es", "nl", "pl")  # the biggest European audiences
+
+
+def localizations(raw, default_desc: str, short: bool) -> dict:
+    """Clean {lang: {"title", "description"?}} from metadata.json: known languages only,
+    a title is required, the description falls back to the English one."""
+    out = {}
+    for lang, v in (raw.items() if isinstance(raw, dict) else []):
+        if lang not in LANGS or not isinstance(v, dict):
+            continue
+        t = " ".join(str(v.get("title") or "").split())
+        if not t:
+            continue
+        if short and "#shorts" not in t.lower() and len(t) <= 92:
+            t += " #Shorts"
+        d = str(v.get("description") or "").strip() or default_desc
+        out[lang] = {"title": t[:100], "description": d[:5000]}
+    return out
 
 
 def _need(d: Path, quota, units: int) -> None:
@@ -86,10 +111,22 @@ class YouTube:
 
     def insert(self, path: Path, body: dict) -> str:
         from googleapiclient.http import MediaFileUpload
-        req = self.api.videos().insert(part="snippet,status", body=body,
+        from googleapiclient.errors import HttpError
+        parts = "snippet,status" + (",localizations" if body.get("localizations") else "")
+        req = self.api.videos().insert(part=parts, body=body,
                                        media_body=MediaFileUpload(str(path), chunksize=-1,
                                                                   resumable=True))
         resp = None
+        if body.get("localizations"):
+            try:  # translations are a bonus: a rejected one must not cost the upload
+                _, resp = req.next_chunk()
+            except HttpError as e:
+                if e.resp.status != 400:
+                    raise
+                plain = {**body, "snippet": {k: v for k, v in body["snippet"].items()
+                                             if k != "defaultLanguage"}}
+                plain.pop("localizations")
+                return self.insert(path, plain)
         while resp is None:
             _, resp = req.next_chunk()
         return resp["id"]

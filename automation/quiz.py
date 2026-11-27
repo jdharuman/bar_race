@@ -125,23 +125,35 @@ SET_NAMES = {("flag", "europe"): "Europe", ("flag", "asia"): "Asia", ("flag", "a
              ("flag", "world mix"): "World Mix", ("flag", "easy mode"): "Easy Mode",
              ("capital", "europe"): "Europe", ("flag", "oceania and islands"): "Oceania and Islands",
              ("flag", "hard mode"): "Hard Mode", ("capital", "asia"): "Asia",
-             ("flag", "look-alikes"): "Look-Alikes", ("capital", "africa"): "Africa",
-             ("capital", "indian states"): "Indian States"}
+             ("flag", "look-alikes"): "Look-Alikes"}
+# Capital quizzes Africa and Indian States drew single-digit views (2026-11-27): they stay
+# valid titles (requests, old rows) but are never generated.
+RECENT = 4  # `used` is oldest first: none of the last 4 sets comes up again
+FLAGS_PER_CAPITAL = 3  # generated quizzes: about 3 flag quizzes for every capital quiz
 
 
 def next_title(used: list[str]) -> str:
     """The next quiz title after `used`: the set whose pool has been covered the least
-    (so big sets come up more often), numbered one past its highest number so far."""
-    count, top = {k: 0 for k in SET_NAMES}, {k: 0 for k in SET_NAMES}
+    (so big sets come up more often), numbered one past its highest number so far.
+    A capital quiz only comes up when capitals are below 1 in FLAGS_PER_CAPITAL + 1,
+    so a night's quizzes are mostly flags with the odd capital, not a run of capitals."""
+    count, top, order = {}, {}, []
     for t in used:
         try:
             kind, cat, n = parse_title(t)
         except QuizError:
             continue
-        count[(kind, cat)] += 1
-        top[(kind, cat)] = max(top[(kind, cat)], n)
-    key = min(SET_NAMES, key=lambda k: count[k] * QUESTIONS / len(pool(*k)))
-    return f"Guess the {key[0].title()}: {SET_NAMES[key]} #{top[key] + 1}"
+        count[(kind, cat)] = count.get((kind, cat), 0) + 1
+        top[(kind, cat)] = max(top.get((kind, cat), 0), n)
+        order.append((kind, cat))
+    recent = set(order[-RECENT:])
+    caps = sum(v for k, v in count.items() if k[0] == "capital")
+    flags = sum(v for k, v in count.items() if k[0] == "flag")
+    kind = "capital" if caps * FLAGS_PER_CAPITAL < flags else "flag"
+    sets = [k for k in SET_NAMES if k[0] == kind]
+    sets = [k for k in sets if k not in recent] or sets  # no set twice in a row
+    key = min(sets, key=lambda k: count.get(k, 0) * QUESTIONS / len(pool(*k)))
+    return f"Guess the {key[0].title()}: {SET_NAMES[key]} #{top.get(key, 0) + 1}"
 
 
 def fetch_flag(iso2: str, dest: Path, cache: Path) -> None:
@@ -161,6 +173,48 @@ def fetch_flag(iso2: str, dest: Path, cache: Path) -> None:
 
 def _toml_str(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+# Translated quiz titles (YouTube shows them to viewers with that language set).
+# lang: (flag title, capital title, ending)
+LOCAL_TITLE = {
+    "de": ("Errate die Flagge", "Errate die Hauptstadt", "Schaffst du 10/10?"),
+    "fr": ("Devine le drapeau", "Devine la capitale", "Peux-tu faire 10/10 ?"),
+    "it": ("Indovina la bandiera", "Indovina la capitale", "Riesci a fare 10/10?"),
+    "es": ("Adivina la bandera", "Adivina la capital", "¿Puedes sacar 10/10?"),
+    "nl": ("Raad de vlag", "Raad de hoofdstad", "Haal jij 10/10?"),
+    "pl": ("Zgadnij flagę", "Zgadnij stolicę", "Dasz radę 10/10?"),
+}
+LOCAL_SET = {  # category -> names in LOCAL_TITLE's language order (de, fr, it, es, nl, pl)
+    "europe": ("Europa", "Europe", "Europa", "Europa", "Europa", "Europa"),
+    "asia": ("Asien", "Asie", "Asia", "Asia", "Azië", "Azja"),
+    "africa": ("Afrika", "Afrique", "Africa", "África", "Afrika", "Afryka"),
+    "americas": ("Amerika", "Amériques", "Americhe", "Américas", "Amerika", "Ameryki"),
+    "world": ("Welt", "Monde", "Mondo", "Mundo", "Wereld", "Świat"),
+    "world mix": ("Weltmix", "Mix mondial", "Mix mondiale", "Mezcla mundial", "Wereldmix",
+                  "Mix świata"),
+    "easy mode": ("Leicht", "Facile", "Facile", "Fácil", "Makkelijk", "Łatwy poziom"),
+    "hard mode": ("Schwer", "Difficile", "Difficile", "Difícil", "Moeilijk", "Trudny poziom"),
+    "oceania and islands": ("Ozeanien und Inseln", "Océanie et îles", "Oceania e isole",
+                            "Oceanía e islas", "Oceanië en eilanden", "Oceania i wyspy"),
+    "look-alikes": ("Verwechslungsgefahr", "Sosies", "Simili", "Parecidas", "Dubbelgangers",
+                    "Podobne"),
+    "indian states": ("Indische Bundesstaaten", "États indiens", "Stati indiani",
+                      "Estados de la India", "Indiase deelstaten", "Stany Indii"),
+}
+
+
+def local_titles(title: str) -> dict:
+    """metadata.json `localizations` for a quiz title (youtube.build_body adds #Shorts)."""
+    kind, cat, n = parse_title(title)
+    names = LOCAL_SET.get(cat)
+    if not names:
+        return {}
+    out = {}
+    for i, (lang, (flag, capital, end)) in enumerate(LOCAL_TITLE.items()):
+        sep = " : " if lang == "fr" else ": "
+        out[lang] = {"title": f"{flag if kind == 'flag' else capital}{sep}{names[i]} #{n} | {end}"}
+    return out
 
 
 def generate(root: Path, d: Path, title: str, fetch=fetch_flag) -> None:
@@ -191,7 +245,8 @@ def generate(root: Path, d: Path, title: str, fetch=fetch_flag) -> None:
     tags = ["quiz", "flag quiz" if kind == "flag" else "capital quiz", f"guess the {kind}",
             "geography", "geography quiz", "trivia", f"{region} quiz", sub.split("#")[0].strip()]
     (d / "metadata.json").write_text(json.dumps({"short": {
-        "title": f"{title} | Can You Get 10/10?", "description": desc, "tags": tags}}, indent=2))
+        "title": f"{title} | Can You Get 10/10?", "description": desc, "tags": tags,
+        "localizations": local_titles(title)}}, indent=2, ensure_ascii=False))
     lines = [f"# {title}", "", "Generated by automation/quiz.py from automation/quiz_data "
              "(Wikidata, CC0). Flags: flagcdn.com (public domain). No estimated values.", ""]
     lines += [f"{i}. {q['prompt'] or q['image'].upper()} → {q['answer']} ({q['fact']})"

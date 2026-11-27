@@ -192,7 +192,12 @@ reviewed = true       # the owner reviews the finished video instead
   shows (the Short may start later). **Indian (NSE) stocks** are in rupees:
   `unit_prefix = "₹"`, `rebase = 100000`, subtitle
   `"Value of ₹1 lakh invested in {start}, dividends reinvested (Yahoo Finance)"`
-  (tickers end in `.NS`; never mix ₹ and $ in one video). If `row.look` is `neon`, add
+  (tickers end in `.NS`; never mix ₹ and $ in one video). **European
+  stocks** whose main listings are all in euros (Xetra `.DE`, Euronext `.PA`
+  `.AS` `.MI` `.MC`…): use those listings, `unit_prefix = "€"`, `rebase = 1000`,
+  subtitle `"Value of €1,000 invested in {start}, dividends reinvested (Yahoo Finance)"`,
+  and titles with € ("€1,000 in BMW vs Mercedes-Benz vs Volkswagen"); never
+  mix € with another currency in one video. If `row.look` is `neon`, add
   `look = "neon"` (black background, glowing lines); otherwise leave `look` out. Main video 2–4 min:
   `seconds_per_year` = 180 / years, between 4 and 12.
 - Don't set `music`; the renderer picks a bundled CC0 track.
@@ -216,9 +221,19 @@ characters.
 ```json
 {
   "main":  {"title": "...", "description": "...", "tags": ["..."]},
-  "short": {"title": "...", "description": "...", "tags": ["..."]}
+  "short": {"title": "...", "description": "...", "tags": ["..."],
+            "localizations": {"de": {"title": "..."}, "fr": {"title": "..."},
+                              "it": {"title": "..."}, "es": {"title": "..."},
+                              "nl": {"title": "..."}, "pl": {"title": "..."}}}
 }
 ```
+
+- `short.localizations`: the Short title translated into German, French,
+  Italian, Spanish, Dutch and Polish (YouTube shows it to viewers using that
+  language). Same meaning, numbers and years as the English title, natural
+  wording, names in their usual local spelling (e.g. "Deutschland",
+  "Allemagne"), ≤ 70 chars, no `#Shorts`. Titles only; the description stays
+  English. If unsure of a translation, leave that language out.
 
 - Titles: hooky but true, ≤ 70 chars, with the year range
   (e.g. "Largest Economies in the World 1960–2025").

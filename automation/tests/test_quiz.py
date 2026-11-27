@@ -165,7 +165,7 @@ def test_quiz_report_names_the_short_only():
 
 def test_next_title_rotates_sets_and_continues_numbers():
     assert quiz.next_title([]) == "Guess the Flag: Europe #1"
-    assert quiz.next_title(["Guess the Flag: Europe #7"]).startswith("Guess the Flag: Asia #1")
+    assert quiz.next_title(["Guess the Flag: Europe #7"]) == "Guess the Capital: World #1"
     plan = [r["title"] for r in daily.read_rows(ROOT / "topics.plan.csv") if r["style"] == "quiz"]
     used = list(plan)
     for _ in range(60):
@@ -270,3 +270,24 @@ def test_default_nightly_slots_skip_lines_so_quizzes_get_its_quota(monkeypatch):
     assert [slot for slot, _ in plan] == ["race", "pillars", "quiz", "quiz", "quiz", "quiz"]
     monkeypatch.setenv("BARRACE_SLOTS", "race, lines, bogus")
     assert daily.graph_slots() == ["race", "lines"]
+
+
+def test_generated_quizzes_mix_flags_with_few_capitals_and_skip_weak_sets():
+    used = []
+    for _ in range(40):
+        used.append(quiz.next_title(used))
+    parsed = [quiz.parse_title(t) for t in used]
+    caps = [p for p in parsed if p[0] == "capital"]
+    assert 8 <= len(caps) <= 10  # about 1 in 4
+    assert not {("capital", "africa"), ("capital", "indian states")} & {p[:2] for p in parsed}
+    for a, b in zip(parsed, parsed[1:]):
+        assert a[:2] != b[:2]  # never the same set twice in a row
+    assert quiz.parse_title("Guess the Capital: Indian States #9")  # still valid on request
+
+
+def test_quiz_titles_are_translated_for_every_generated_set():
+    for kind, cat in quiz.SET_NAMES:
+        loc = quiz.local_titles(f"Guess the {kind.title()}: {quiz.SET_NAMES[(kind, cat)]} #3")
+        assert set(loc) == set(quiz.LOCAL_TITLE) and all("#3" in v["title"] for v in loc.values())
+    assert quiz.local_titles("Guess the Flag: Europe #2")["de"]["title"] == \
+        "Errate die Flagge: Europa #2 | Schaffst du 10/10?"

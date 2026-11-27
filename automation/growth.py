@@ -88,6 +88,8 @@ def check(plan, topics: list[dict], known: set[str]) -> dict:
             i = _find(topics, title)
             if i is None or daily._norm(title) in used or len(out[name]) == cap:
                 continue
+            if name == "drop" and daily.pinned(topics[i]):  # part of a running test
+                continue
             used.add(daily._norm(title))
             out[name].append({"title": topics[i]["title"],
                               "why": _text(it.get("why") if isinstance(it, dict) else "", 160)})
