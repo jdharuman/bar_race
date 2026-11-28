@@ -158,19 +158,49 @@ Exact formats are in `README.md` (sections "data.csv", "video.toml",
 
 ## 4. Images (`<dir>/images/`)
 
+The picture shows **the item itself**: viewers should see the person, the
+building, the car, the painting. A flag is not a stand-in for anything but a
+country. Aim for a real picture on **≥ 90 % of items**.
+
+| Item is… | Image |
+|---|---|
+| a country, or a national team | its flag |
+| a person, building, landmark, city, mountain, lake, animal, vehicle, aircraft, ship, rocket, spacecraft, planet, painting or other artwork, stadium, product, game console | a **photo of that item** (below) |
+| a company or brand | its logo if public domain (`--logo`), else a photo of its flagship product or headquarters |
+| a concept with no physical form (a method, a category) | a representative free picture of it (NASA images are public domain), else empty |
+
+The country of a person/building/car belongs in `category` (race) or
+`detail` (pillars), not in `image`.
+
+**Photos: use the image finder** (it checks the licence in code, rule 3):
+
+```
+uv run --project automation automation/images.py search "Burj Khalifa"
+uv run --project automation automation/images.py get Q12495 <dir>/images/burj-khalifa --item "Burj Khalifa"
+```
+
+`search` lists Wikidata candidates (Q-id, label, description): pick the one
+that is really your item (check the description: "painting by J. M. W.
+Turner", "skyscraper in Dubai"). `get` downloads that item's own picture
+(500 px, `.jpg` or `.png`, see `path` in its output) only when Commons gives
+it a free licence, and appends the credit to `images/credits.csv`. Exit 1 /
+`"ok": false` = no free picture on that item: try a closely related item (the
+car model's generation, the building's complex) or leave `image` empty. Run
+the calls one after another (Wikimedia rate-limits bursts).
+
 - **Country flags:** `curl -sL https://flagcdn.com/w320/<iso2>.png -o images/<iso2>.png`
-  (flags are public domain). Use them for country items and for people's
-  nationality only when there's no free photo and the flag helps.
-- **People, buildings, companies:** only Wikimedia Commons files with a free
-  licence. Check with
-  `https://commons.wikimedia.org/w/api.php?action=query&titles=File:<name>&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=400&format=json`
-  and accept only `LicenseShortName` of CC0, Public domain, CC BY x.x or
-  CC BY-SA x.x. Download the `thumburl`. Record file page, author and licence
-  for each image. Logos: only when Commons says public domain (e.g.
-  text-only logos).
-- No free image → leave `image` empty. Never use images from news sites,
-  Google Images, fan sites or the reference video.
-- Check each download really is an image (`file images/x.png`).
+  (public domain).
+- Other Commons files you pick by hand: check with
+  `https://commons.wikimedia.org/w/api.php?action=query&titles=File:<name>&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=500&format=json`
+  and accept only `LicenseShortName` CC0, Public domain, CC BY x.x or
+  CC BY-SA x.x; logos only public domain. Add a row to `images/credits.csv`.
+- Never use images from news sites, Google Images, fan sites or the reference
+  video. Check each download really is an image (`file images/x.jpg`).
+- Put every CC BY / CC BY-SA credit from `images/credits.csv` into the
+  description's `Photo credits:` and the notes' image list.
+- **Before you finish:** count the items with an image and list the ones
+  without one (and why) in `research_notes.md`. Below 90 %: try again for the
+  missing ones first.
 
 ## 5. video.toml
 

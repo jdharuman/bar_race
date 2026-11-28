@@ -916,6 +916,10 @@ def finish_request(root: Path, d: Path, status: str) -> dict:
         err = "unknown error (see the request log in videos/.requests/)"
     if status == "waiting":
         err = ""
+        # no quota: the owner uploads this one by hand from Telegram (the Short follows
+        # as a preview video), so it never joins the queue for the next quota reset
+        status = "manual"
+        (d / QUOTA_WAIT).unlink(missing_ok=True)
     done = read_rows(root / REQUESTS_DONE)
     done.append({**row, "finished_at": datetime.now().isoformat(timespec="seconds"),
                  "folder": str(d), "status": status, "error": err,
@@ -925,7 +929,35 @@ def finish_request(root: Path, d: Path, status: str) -> dict:
     hint = ("/retry won't help here: there is no real data for this topic. "
             "Send /new with one of the suggestions." if (d / NO_DATA).exists() else
             "To retry without redoing finished steps, send /retry to the bot.")
+    if status == "manual":
+        return {"status": status, "title": row["title"] or row["youtube_url"], "main_url": "",
+                "short_url": "", "error": "", "message": manual_upload_message(d, row)}
     return report(row, up, status, err, hint, tag=" (Telegram request)")
+
+
+def manual_upload_message(d: Path, row: dict) -> str:
+    """Telegram text for a request made while the quota was used up: everything needed
+    to upload the Short by hand (YouTube's upload form: title, description, tags)."""
+    import youtube
+    try:
+        meta = json.loads((d / "metadata.json").read_text()).get("short", {})
+    except (OSError, ValueError):
+        meta = {}
+    body = youtube.build_body(meta, short=True) if meta else {"snippet": {}}
+    sn = body["snippet"]
+    lines = [f"📥 Made, no YouTube quota left today (Telegram request): "
+             f"{row['title'] or row['youtube_url']}",
+             "The Short follows as a video: save it and upload it yourself (it is NOT queued "
+             "for the next quota reset).", "",
+             "Title:", sn.get("title", "-"), "",
+             "Description:", sn.get("description", "-")[:2500], "",
+             "Tags:", ", ".join(sn.get("tags", [])) or "-"]
+    if body.get("localizations"):
+        lines += ["", "Translated titles (Studio → Subtitles → Add language):"]
+        lines += [f"{k}: {v['title']}" for k, v in body["localizations"].items()]
+    lines += ["", f"File: {d / 'out' / 'short.mp4'}"]
+    text = "\n".join(lines)
+    return text if len(text) <= 4000 else text[:3980] + "\n… (cut)"
 
 
 def last_failed_request(root: Path) -> Path | None:

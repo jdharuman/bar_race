@@ -163,16 +163,27 @@ def test_held_upload_then_uploaded_next_run(tmp_path):
     assert sent[0].startswith("✅") and "P" in sent[0]  # held video goes first
 
 
-def test_request_held_for_quota_is_not_a_failure(tmp_path):
+def test_request_without_quota_is_sent_for_manual_upload_not_queued(tmp_path):
+    def research(root, d):
+        (d / "metadata.json").write_text(json.dumps({"short": {
+            "title": "EV Chargers 2010–2024", "description": "Who built the most.",
+            "tags": ["ev", "charging"], "localizations": {"de": {"title": "E-Ladepunkte"}}}}))
+
     def upload(root, d):
         (d / daily.QUOTA_WAIT).write_text("x")
         raise daily.StepError("waiting for YouTube quota")
     sent = []
     code = daily.run_request(tmp_path, MON, row=row("race", "Req"), notify=sent.append,
-                             steps=[("research", ok), ("upload", upload)])
-    assert code == 0 and "⏳" in sent[0] and "Telegram request" in sent[0]
-    assert daily.read_rows(tmp_path / daily.REQUESTS_DONE)[0]["status"] == "waiting"
+                             steps=[("research", research), ("upload", upload)])
+    msg = sent[0]
+    assert code == 0 and msg.startswith("📥") and "NOT queued" in msg
+    assert "EV Chargers 2010–2024 #Shorts" in msg and "Who built the most." in msg
+    assert "ev, charging" in msg and "de: E-Ladepunkte #Shorts" in msg
+    assert daily.read_rows(tmp_path / daily.REQUESTS_DONE)[0]["status"] == "manual"
     assert daily.last_failed_request(tmp_path) is None
+    uploads = []
+    daily.upload_waiting(tmp_path, lambda root, d: uploads.append(d), notify=sent.append)
+    assert uploads == []  # never uploaded again at the next quota reset
 
 
 def test_unsourceable_topic_makes_way_for_the_next_one_twice(tmp_path):

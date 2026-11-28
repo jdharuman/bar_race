@@ -39,6 +39,22 @@ The run always takes the **top row**. Reorder rows to change what comes next.
 Finished rows move to `topics_done.csv` with the folder, status, video ids and
 any error.
 
+## Pictures in the charts
+
+Each bar or pillar shows a picture of the item itself: a photo of the person,
+building, car, painting or city. Flags are only for countries and national
+teams. The research agent finds photos with `automation/images.py` (Wikidata's
+picture of the item, accepted only with a free Commons licence, checked in
+code). Each download is credited in `images/credits.csv` in the video folder
+and in the description. A blank tile with letters means no free picture
+exists; the agent lists those in `research_notes.md` and aims for pictures on
+at least 90% of items. By hand:
+
+```
+uv run --project automation automation/images.py search "Burj Khalifa"
+uv run --project automation automation/images.py get Q12495 videos/<folder>/images/burj-khalifa
+```
+
 ## Reviewing and fixing a video
 
 1. The Telegram message has the Studio link for the Short (and the main video
@@ -94,7 +110,10 @@ plus 50 for its thumbnail). The run keeps a ledger in
 `videos/.quota.json` and never starts an upload the day can't cover: the
 video is made, the message says "⏳ upload waiting", and it uploads first
 thing in the next run. Telegram requests use the same day's quota, so a
-request in the evening (Berlin) leaves fewer quizzes for the night. When
+request in the evening (Berlin) leaves fewer quizzes for the night. A
+Telegram request made when the quota is used up is **not** queued: the bot
+sends the Short plus its title, description, tags and translated titles, you
+upload it by hand, and `requests_done.csv` records it as `manual`. When
 Google raises the quota, set `BARRACE_QUOTA=<new limit>` in
 `~/.config/barrace/env` and `systemctl --user restart n8n barrace-bot`; the
 extra units become extra quiz Shorts. `/status` in the bot shows today's use.

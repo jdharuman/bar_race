@@ -174,6 +174,8 @@ class Bot:
         parts = [f"{made} Short{'' if made == 1 else 's'} uploaded"]
         if n.get("waiting"):
             parts.append(f"{n['waiting']} waiting for quota")
+        if n.get("manual"):
+            parts.append(f"{n['manual']} sent here to upload by hand")
         if n.get("failed"):
             parts.append(f"{n['failed']} topic{'' if n['failed'] == 1 else 's'} failed (no video)")
         q = daily.Quota(self.root)
@@ -387,8 +389,9 @@ class Bot:
         wait = (f"\nAnother video is being made ({h.get('title') or '?'}); yours starts "
                 "automatically when it finishes.") if h else ""
         q = daily.Quota(self.root)
-        quota = (f"\n⚠️ Today's YouTube quota is used up ({q.left():,} units left); the upload "
-                 "waits until it resets (09:00 Berlin)." if q.left() < daily.COST_VIDEO else
+        quota = (f"\n⚠️ Today's YouTube quota is used up ({q.left():,} units left): you'll get "
+                 "the Short and its title, description and tags here to upload by hand."
+                 if q.left() < daily.COST_VIDEO else
                   f"\nQuota: {q.left():,} units left today; this request uses {daily.COST_VIDEO:,}.")
         child = self.start(self.root, args, self.root / "videos" / ".requests")
         self.children.append(child)
